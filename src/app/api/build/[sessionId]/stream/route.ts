@@ -3,11 +3,15 @@
 //   assistant_message, tool_use, tool_result, file_change, build_status,
 //   stage_change, step_done, error
 //
-// Pattern: EventEmitter (agent runner) → ReadableStream (SSE) → Frontend
+// Architecture (serverless-compatible):
+//   Agent Lambda emits events → Supabase Realtime broadcast
+//   SSE Lambda subscribes to Supabase Realtime → forwards to frontend via SSE
+//   Also listens to local EventEmitter (for same-Lambda / dev mode)
 
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { reconnectSession } from "@/server/agent/session-manager";
+import { getSessionMeta } from "@/server/agent/session-manager";
+import { createServiceClient } from "@/lib/supabase";
 import { getUserByClerkId } from "@/lib/credits";
 import type { AgentEvent } from "@/types";
 
@@ -32,14 +36,14 @@ export async function GET(
     return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
   }
 
-  // Reconnect session from Supabase + E2B sandbox
-  const session = await reconnectSession(sessionId, user.id);
-  if (!session) {
+  // Verify session exists and belongs to user (lightweight — no sandbox reconnect)
+  const meta = await getSessionMeta(sessionId, user.id);
+  if (!meta) {
     return NextResponse.json({ error: "Session introuvable ou expirée" }, { status: 404 });
   }
 
   // ——————————————————————————————————————————————
-  // Build SSE ReadableStream backed by EventEmitter
+  // Build SSE ReadableStream backed by Supabase Realtime
   // ——————————————————————————————————————————————
   const encoder = new TextEncoder();
 
@@ -54,62 +58,54 @@ export async function GET(
         }
       };
 
-      const onEvent = (event: AgentEvent) => {
+      // Subscribe to Supabase Realtime channel for cross-Lambda events
+      const supabase = createServiceClient();
+      const channel = supabase.channel(`session:${sessionId}`);
+
+      channel.on("broadcast", { event: "agent_event" }, (message) => {
+        const event = message.payload as AgentEvent;
         send(event);
-      };
 
-      const onDone = () => {
-        try {
-          controller.enqueue(
-            encoder.encode(
-              `data: ${JSON.stringify({ type: "done", payload: null, timestamp: new Date().toISOString() })}\n\n`
-            )
-          );
-          controller.close();
-        } catch {
-          // Already closed
+        // Close stream on terminal events
+        if ((event.type as string) === "done" || event.type === "error") {
+          try {
+            controller.close();
+          } catch {
+            // Already closed
+          }
+          void supabase.removeChannel(channel);
+          clearInterval(pingInterval);
         }
-        cleanup();
-      };
+      });
 
-      const onError = () => {
-        cleanup();
-        try {
-          controller.close();
-        } catch {
-          // Already closed
+      channel.subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          // Send initial connection event
+          try {
+            controller.enqueue(
+              encoder.encode(
+                `data: ${JSON.stringify({ type: "connected", payload: { sessionId }, timestamp: new Date().toISOString() })}\n\n`
+              )
+            );
+          } catch {
+            // Ignore
+          }
         }
-      };
-
-      const cleanup = () => {
-        session.emitter.off("agent_event", onEvent);
-        session.emitter.off("agent_done", onDone);
-        session.emitter.off("agent_error", onError);
-      };
-
-      session.emitter.on("agent_event", onEvent);
-      session.emitter.once("agent_done", onDone);
-      session.emitter.once("agent_error", onError);
+      });
 
       // Send a connection heartbeat every 25 seconds to keep the connection alive
-      // through proxies/load balancers that drop idle connections
       const pingInterval = setInterval(() => {
         try {
           controller.enqueue(encoder.encode(": ping\n\n"));
         } catch {
           clearInterval(pingInterval);
-          cleanup();
+          void supabase.removeChannel(channel);
         }
       }, 25_000);
-
-      // Note: we rely on cancel being called when the client disconnects
     },
 
     cancel() {
-      // Client disconnected — clean up listeners
-      session.emitter.removeAllListeners("agent_event");
-      session.emitter.removeAllListeners("agent_done");
-      session.emitter.removeAllListeners("agent_error");
+      // Client disconnected — Supabase channel cleanup happens via removeChannel above
     },
   });
 

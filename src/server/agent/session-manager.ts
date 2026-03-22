@@ -202,15 +202,43 @@ export async function closeSession(sessionId: string): Promise<void> {
 }
 
 // ============================================================
-// Event helpers (compatible with old API)
+// Event helpers — dual emission: local EventEmitter + Supabase Realtime
+// The local emitter works when agent + SSE are in the same Lambda (dev).
+// Supabase Realtime broadcast works cross-Lambda (production/serverless).
 // ============================================================
 
+/** Broadcast an agent event via Supabase Realtime */
+async function broadcastToRealtime(sessionId: string, event: AgentEvent): Promise<void> {
+  try {
+    const supabase = createServiceClient();
+    const channel = supabase.channel(`session:${sessionId}`);
+    await channel.send({
+      type: "broadcast",
+      event: "agent_event",
+      payload: event,
+    });
+    // Unsubscribe immediately — we're just sending, not listening
+    await supabase.removeChannel(channel);
+  } catch (err) {
+    console.warn("[session-manager] Realtime broadcast failed:", err instanceof Error ? err.message : err);
+  }
+}
+
 export function emitEvent(session: ReconnectedSession, event: AgentEvent): void {
+  // Local emitter (same Lambda / dev)
   session.emitter.emit("agent_event", event);
+  // Cross-Lambda broadcast (production)
+  void broadcastToRealtime(session.sessionId, event);
 }
 
 export function emitDone(session: ReconnectedSession): void {
   session.emitter.emit("agent_done");
+  const doneEvent: AgentEvent = {
+    type: "done" as AgentEvent["type"],
+    payload: null,
+    timestamp: new Date().toISOString(),
+  };
+  void broadcastToRealtime(session.sessionId, doneEvent);
 }
 
 export function emitError(session: ReconnectedSession, message: string): void {
@@ -221,4 +249,5 @@ export function emitError(session: ReconnectedSession, message: string): void {
   };
   session.emitter.emit("agent_event", event);
   session.emitter.emit("agent_error");
+  void broadcastToRealtime(session.sessionId, event);
 }
