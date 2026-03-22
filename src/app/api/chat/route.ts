@@ -191,7 +191,7 @@ export async function POST(req: Request): Promise<Response> {
 
   try {
     const result = streamText({
-      model: openrouter(model),
+      model: openrouter.chat(model),
       messages: llmMessages,
       system: systemPrompt,
       onFinish: async ({ usage, text }) => {

@@ -281,6 +281,18 @@ export function PreviewPanel({
     };
   }, [sessionId, addOrUpdateFile, removeFile]);
 
+  // ── Remount template on project change ────
+  const prevSessionIdRef = useRef(sessionId);
+  useEffect(() => {
+    if (prevSessionIdRef.current && prevSessionIdRef.current !== sessionId && sessionId) {
+      void webContainerManager.remountTemplate().then(async () => {
+        const paths = await webContainerManager.listFiles();
+        setInitialFiles(paths);
+      });
+    }
+    prevSessionIdRef.current = sessionId;
+  }, [sessionId, setInitialFiles]);
+
   // ── Handlers ──────────────────────────────
 
   const handleRefresh = useCallback(() => {
@@ -386,7 +398,7 @@ export function PreviewPanel({
                     <Button
                       size="sm"
                       variant="outline"
-                      onClick={() => webContainerManager.boot()}
+                      onClick={() => void webContainerManager.resetAndBoot()}
                     >
                       Réessayer
                     </Button>

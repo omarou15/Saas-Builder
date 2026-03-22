@@ -295,10 +295,11 @@ class WebContainerManager {
       const msg = err instanceof Error ? err.message : "WebContainer boot failed";
 
       // "Unable to create more instances" = WebContainer already booted in this page.
-      // Do NOT reset — the instance is alive, we just can't boot a second one.
+      // Reset bootPromise so the "Réessayer" button can call resetAndBoot().
       if (msg.includes("Unable to create more instances")) {
+        this.bootPromise = null;
+        this.wc = null;
         this.emit("error", msg);
-        // Keep bootPromise so future calls don't try to boot again
         return;
       }
 
@@ -316,13 +317,31 @@ class WebContainerManager {
   teardown(): void {
     if (this.wc) {
       this.wc.teardown();
-      this.wc = null;
-      this.bootPromise = null;
-      this._status = "idle";
-      this._serverUrl = null;
-      this._error = undefined;
-      this.emit("idle");
     }
+    this.wc = null;
+    this.bootPromise = null;
+    this._status = "idle";
+    this._serverUrl = null;
+    this._error = undefined;
+    this.emit("idle");
+  }
+
+  /**
+   * Full recovery: teardown whatever exists, then boot fresh.
+   * Used by the "Réessayer" button after an error.
+   */
+  async resetAndBoot(): Promise<void> {
+    this.teardown();
+    await this.boot();
+  }
+
+  /**
+   * Re-mount the starter template without tearing down the WebContainer.
+   * Used when navigating between projects.
+   */
+  async remountTemplate(): Promise<void> {
+    if (!this.wc) return;
+    await this.wc.mount(STARTER_TEMPLATE);
   }
 
   async writeFile(agentPath: string, content: string): Promise<void> {

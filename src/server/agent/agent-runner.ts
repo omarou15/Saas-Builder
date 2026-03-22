@@ -121,7 +121,7 @@ export async function runAgentStep(
 
   try {
     const result = await generateText({
-      model: openrouter(model),
+      model: openrouter.chat(model),
       system: systemPrompt,
       messages: session.conversationHistory,
       tools,
