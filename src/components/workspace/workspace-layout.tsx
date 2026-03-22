@@ -11,20 +11,35 @@
 //   - Deploy flow
 //   - Credit balance polling
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Panel,
   Group,
   Separator,
 } from "react-resizable-panels";
-import { MessageSquare, Eye, Files, Terminal, Loader2 } from "lucide-react";
+import {
+  MessageSquare,
+  Eye,
+  Files,
+  Terminal,
+  AlertTriangle,
+  MonitorX,
+  Loader2,
+} from "lucide-react";
 import { cn } from "@/lib/utils";
 import { WorkspaceHeader } from "./workspace-header";
 import { ChatPanel } from "./chat-panel";
 import { DeployDialog } from "./deploy-dialog";
 import { PreviewPanel } from "@/components/preview/preview-panel";
 import { FileTree, useFileTree } from "@/components/preview/file-tree";
-import type { Project, ProjectStatus, BuildStage } from "@/types";
+import type {
+  Project,
+  ProjectStatus,
+  BuildStage,
+  ConsoleLogEntry,
+  BuildError,
+  PreviewError,
+} from "@/types";
 
 // ─────────────────────────────────────────────
 // Types
@@ -65,19 +80,50 @@ function ResizeHandle({
 }
 
 // ─────────────────────────────────────────────
-// Bottom panel (file tree + logs)
+// Bottom panel (Files + Console + Problems + Terminal)
 // ─────────────────────────────────────────────
+
+type BottomTab = "files" | "console" | "problems" | "terminal";
 
 function BottomPanel({
   files,
+  consoleLogs,
+  buildErrors,
+  terminalLogs,
   collapsed,
   onToggle,
 }: {
   files: string[];
+  consoleLogs: ConsoleLogEntry[];
+  buildErrors: BuildError[];
+  terminalLogs: string[];
   collapsed: boolean;
   onToggle: () => void;
 }) {
-  const [activeTab, setActiveTab] = useState<"files" | "logs">("files");
+  const [activeTab, setActiveTab] = useState<BottomTab>("files");
+  const consoleEndRef = useRef<HTMLDivElement>(null);
+  const terminalEndRef = useRef<HTMLDivElement>(null);
+
+  // Auto-scroll console and terminal to bottom
+  useEffect(() => {
+    if (activeTab === "console") {
+      consoleEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [consoleLogs.length, activeTab]);
+
+  useEffect(() => {
+    if (activeTab === "terminal") {
+      terminalEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    }
+  }, [terminalLogs.length, activeTab]);
+
+  const errorCount = buildErrors.filter((e) => e.severity === "error").length;
+  const consoleErrorCount = consoleLogs.filter((l) => l.level === "error").length;
+
+  function selectTab(tab: BottomTab) {
+    setActiveTab(tab);
+    if (collapsed) onToggle();
+  }
 
   return (
     <div
@@ -94,11 +140,10 @@ function BottomPanel({
         >
           {collapsed ? "▲" : "▼"}
         </button>
+
+        {/* Files tab */}
         <button
-          onClick={() => {
-            setActiveTab("files");
-            if (collapsed) onToggle();
-          }}
+          onClick={() => selectTab("files")}
           className={cn(
             "flex items-center gap-1.5 rounded px-2 py-0.5 text-xs transition-colors",
             activeTab === "files" && !collapsed
@@ -109,31 +154,154 @@ function BottomPanel({
           <Files className="h-3 w-3" />
           Files
         </button>
+
+        {/* Console tab */}
         <button
-          onClick={() => {
-            setActiveTab("logs");
-            if (collapsed) onToggle();
-          }}
+          onClick={() => selectTab("console")}
           className={cn(
             "flex items-center gap-1.5 rounded px-2 py-0.5 text-xs transition-colors",
-            activeTab === "logs" && !collapsed
+            activeTab === "console" && !collapsed
+              ? "bg-white/5 text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <MonitorX className="h-3 w-3" />
+          Console
+          {consoleErrorCount > 0 && (
+            <span className="rounded-full bg-red-500/20 px-1.5 text-[10px] font-medium text-red-400">
+              {consoleErrorCount}
+            </span>
+          )}
+        </button>
+
+        {/* Problems tab */}
+        <button
+          onClick={() => selectTab("problems")}
+          className={cn(
+            "flex items-center gap-1.5 rounded px-2 py-0.5 text-xs transition-colors",
+            activeTab === "problems" && !collapsed
+              ? "bg-white/5 text-foreground"
+              : "text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <AlertTriangle className="h-3 w-3" />
+          Problems
+          {errorCount > 0 && (
+            <span className="rounded-full bg-red-500/20 px-1.5 text-[10px] font-medium text-red-400">
+              {errorCount}
+            </span>
+          )}
+        </button>
+
+        {/* Terminal tab */}
+        <button
+          onClick={() => selectTab("terminal")}
+          className={cn(
+            "flex items-center gap-1.5 rounded px-2 py-0.5 text-xs transition-colors",
+            activeTab === "terminal" && !collapsed
               ? "bg-white/5 text-foreground"
               : "text-muted-foreground hover:text-foreground"
           )}
         >
           <Terminal className="h-3 w-3" />
-          Logs
+          Terminal
         </button>
       </div>
 
       {/* Content */}
       {!collapsed && (
-        <div className="h-[calc(100%-2rem)] overflow-y-auto">
-          {activeTab === "files" ? (
-            <FileTree files={files} />
-          ) : (
-            <div className="flex items-center justify-center p-4 text-xs text-muted-foreground">
-              Logs will appear here during build…
+        <div className="h-[calc(100%-2rem)] overflow-y-auto font-mono text-xs">
+          {activeTab === "files" && <FileTree files={files} />}
+
+          {activeTab === "console" && (
+            <div className="p-2 space-y-0.5">
+              {consoleLogs.length === 0 ? (
+                <p className="text-muted-foreground/50 p-2 text-center font-sans">
+                  Console logs will appear here…
+                </p>
+              ) : (
+                consoleLogs.map((log) => (
+                  <div
+                    key={log.id}
+                    className={cn(
+                      "flex items-start gap-2 rounded px-2 py-0.5",
+                      log.level === "error" && "bg-red-500/5 text-red-400",
+                      log.level === "warn" && "bg-yellow-500/5 text-yellow-400",
+                      log.level === "info" && "text-blue-400",
+                      log.level === "log" && "text-muted-foreground"
+                    )}
+                  >
+                    <span className="shrink-0 w-10 text-muted-foreground/40">
+                      {new Date(log.timestamp).toLocaleTimeString("fr-FR", {
+                        hour: "2-digit",
+                        minute: "2-digit",
+                        second: "2-digit",
+                      })}
+                    </span>
+                    <span className="shrink-0 w-12 uppercase font-semibold text-[10px]">
+                      {log.level}
+                    </span>
+                    <span className="whitespace-pre-wrap break-all flex-1">
+                      {log.message}
+                      {log.source && (
+                        <span className="ml-2 text-muted-foreground/40">
+                          {log.source}
+                        </span>
+                      )}
+                    </span>
+                  </div>
+                ))
+              )}
+              <div ref={consoleEndRef} />
+            </div>
+          )}
+
+          {activeTab === "problems" && (
+            <div className="p-2 space-y-1">
+              {buildErrors.length === 0 ? (
+                <p className="text-muted-foreground/50 p-2 text-center font-sans">
+                  No problems detected
+                </p>
+              ) : (
+                buildErrors.map((err) => (
+                  <div
+                    key={err.id}
+                    className={cn(
+                      "flex items-start gap-2 rounded px-2 py-1",
+                      err.severity === "error"
+                        ? "bg-red-500/5 text-red-400"
+                        : "bg-yellow-500/5 text-yellow-400"
+                    )}
+                  >
+                    {err.severity === "error" ? (
+                      <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5 text-red-400" />
+                    ) : (
+                      <AlertTriangle className="h-3 w-3 shrink-0 mt-0.5 text-yellow-400" />
+                    )}
+                    <span className="shrink-0 text-muted-foreground">
+                      {err.file}
+                      {err.line != null && `:${err.line}`}
+                      {err.column != null && `:${err.column}`}
+                    </span>
+                    <span className="flex-1 break-all">{err.message}</span>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+
+          {activeTab === "terminal" && (
+            <div className="p-2">
+              {terminalLogs.length === 0 ? (
+                <p className="text-muted-foreground/50 p-2 text-center font-sans">
+                  Terminal output will appear here during build…
+                </p>
+              ) : (
+                <pre className="whitespace-pre-wrap break-all text-muted-foreground">
+                  {terminalLogs.join("")}
+                </pre>
+              )}
+              <div ref={terminalEndRef} />
             </div>
           )}
         </div>
@@ -184,6 +352,22 @@ function MobileTabBar({
 }
 
 // ─────────────────────────────────────────────
+// Error message formatting helpers
+// ─────────────────────────────────────────────
+
+function buildErrorToMessage(err: BuildError): string {
+  const loc = [err.file, err.line, err.column].filter(Boolean).join(":");
+  return `Build Error at ${loc}\n${err.message}`;
+}
+
+function consoleErrorToMessage(entry: ConsoleLogEntry): string {
+  let msg = `Runtime Error: ${entry.message}`;
+  if (entry.source) msg += `\nSource: ${entry.source}`;
+  if (entry.stack) msg += `\nStack trace:\n${entry.stack}`;
+  return msg;
+}
+
+// ─────────────────────────────────────────────
 // WorkspaceLayout — main component
 // ─────────────────────────────────────────────
 
@@ -199,6 +383,18 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
   const [deployOpen, setDeployOpen] = useState(false);
   const [isDeploying, setIsDeploying] = useState(false);
   const [sessionLoading, setSessionLoading] = useState(false);
+
+  // Auto-debug state
+  const [autoFixEnabled, setAutoFixEnabled] = useState(false);
+  const [consoleLogs, setConsoleLogs] = useState<ConsoleLogEntry[]>([]);
+  const [buildErrors, setBuildErrors] = useState<BuildError[]>([]);
+  const [terminalLogs, setTerminalLogs] = useState<string[]>([]);
+  const [pendingError, setPendingError] = useState<PreviewError | null>(null);
+  const autoFixCountRef = useRef<{ errorKey: string; count: number }>({
+    errorKey: "",
+    count: 0,
+  });
+  const autoFixMaxRetries = 3;
 
   const { files } = useFileTree();
 
@@ -270,6 +466,87 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
     [project.id, sessionLoading]
   );
 
+  // ── Preview error handler (auto-debug) ──────
+  const handlePreviewError = useCallback(
+    (entry: ConsoleLogEntry | BuildError) => {
+      const error: PreviewError = {
+        type: "line" in entry ? "build" : "runtime",
+        entry,
+        timestamp: new Date().toISOString(),
+      };
+
+      // Deduplicate: don't spam for the same error message
+      const errorKey =
+        "message" in entry
+          ? entry.message.slice(0, 120)
+          : "";
+
+      setPendingError((prev) => {
+        // If same error already pending, skip
+        if (prev && "message" in prev.entry && prev.entry.message.slice(0, 120) === errorKey) {
+          return prev;
+        }
+        return error;
+      });
+
+      // Auto-fix: if enabled, send to agent automatically
+      if (autoFixEnabled && sessionId) {
+        // Rate limit: max 3 auto-fix attempts for the same error
+        if (autoFixCountRef.current.errorKey === errorKey) {
+          autoFixCountRef.current.count++;
+          if (autoFixCountRef.current.count > autoFixMaxRetries) {
+            // Disable auto-fix and show manual review message
+            setAutoFixEnabled(false);
+            autoFixCountRef.current = { errorKey: "", count: 0 };
+            return;
+          }
+        } else {
+          autoFixCountRef.current = { errorKey, count: 1 };
+        }
+
+        // Auto-send to agent
+        void sendTryToFix(error);
+      }
+    },
+    [autoFixEnabled, sessionId] // eslint-disable-line react-hooks/exhaustive-deps
+  );
+
+  // ── Send "Try to Fix" to agent ──────────────
+  const sendTryToFix = useCallback(
+    async (error: PreviewError) => {
+      if (!sessionId) return;
+
+      const errorDescription =
+        error.type === "build"
+          ? buildErrorToMessage(error.entry as BuildError)
+          : consoleErrorToMessage(error.entry as ConsoleLogEntry);
+
+      const message = `The following ${error.type} error was detected in the preview:\n\n\`\`\`\n${errorDescription}\n\`\`\`\n\nPlease analyze and fix it. Read the relevant file first, then apply the fix.`;
+
+      try {
+        await fetch(`/api/build/${sessionId}/message`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ message }),
+        });
+        // Clear pending error after sending
+        setPendingError(null);
+      } catch {
+        // Non-fatal
+      }
+    },
+    [sessionId]
+  );
+
+  // ── Handle terminal logs from WebContainer stderr ─
+  const handleTerminalData = useCallback((data: string) => {
+    setTerminalLogs((prev) => {
+      const next = [...prev, data];
+      // Keep max 1000 entries
+      return next.length > 1000 ? next.slice(-1000) : next;
+    });
+  }, []);
+
   // ── Handle stage changes from chat ─────────
   const handleStageChange = useCallback(
     (_stage: BuildStage, _progress: number) => {
@@ -320,6 +597,35 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
     })();
   }, []);
 
+  // ── Compute chat error banner props ────────
+  const chatPendingError = pendingError
+    ? {
+        type: pendingError.type,
+        message:
+          pendingError.type === "build"
+            ? (pendingError.entry as BuildError).message
+            : (pendingError.entry as ConsoleLogEntry).message,
+        file:
+          pendingError.type === "build"
+            ? (pendingError.entry as BuildError).file
+            : (pendingError.entry as ConsoleLogEntry).source,
+        stack:
+          pendingError.type === "runtime"
+            ? (pendingError.entry as ConsoleLogEntry).stack
+            : undefined,
+      }
+    : null;
+
+  const handleTryToFix = useCallback(() => {
+    if (pendingError) {
+      void sendTryToFix(pendingError);
+    }
+  }, [pendingError, sendTryToFix]);
+
+  const handleDismissError = useCallback(() => {
+    setPendingError(null);
+  }, []);
+
   // ── Start session button (if no session) ──
   const showStartButton = !sessionId && !sessionLoading && project.status !== "draft";
 
@@ -335,6 +641,8 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
         canDeploy={canDeploy}
         isDeploying={isDeploying}
         onDeploy={handleDeploy}
+        autoFixEnabled={autoFixEnabled}
+        onAutoFixToggle={() => setAutoFixEnabled((v) => !v)}
       />
 
       {/* Mobile tab bar */}
@@ -355,6 +663,9 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
                       sessionId={sessionId}
                       onStageChange={handleStageChange}
                       onAgentDone={handleAgentDone}
+                      pendingError={chatPendingError}
+                      onTryToFix={handleTryToFix}
+                      onDismissError={handleDismissError}
                     />
                     {/* Start session overlay */}
                     {showStartButton && (
@@ -387,7 +698,13 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
 
                 {/* Preview panel */}
                 <Panel defaultSize={60} minSize={30}>
-                  <PreviewPanel sessionId={sessionId ?? undefined} />
+                  <PreviewPanel
+                    sessionId={sessionId ?? undefined}
+                    onConsoleLogs={setConsoleLogs}
+                    onBuildErrors={setBuildErrors}
+                    onPreviewError={handlePreviewError}
+                    onStderrData={handleTerminalData}
+                  />
                 </Panel>
               </Group>
             </Panel>
@@ -405,6 +722,9 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
             >
               <BottomPanel
                 files={files}
+                consoleLogs={consoleLogs}
+                buildErrors={buildErrors}
+                terminalLogs={terminalLogs}
                 collapsed={bottomCollapsed}
                 onToggle={() => setBottomCollapsed((v) => !v)}
               />
@@ -459,7 +779,13 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
               mobileTab !== "preview" && "hidden"
             )}
           >
-            <PreviewPanel sessionId={sessionId ?? undefined} />
+            <PreviewPanel
+                    sessionId={sessionId ?? undefined}
+                    onConsoleLogs={setConsoleLogs}
+                    onBuildErrors={setBuildErrors}
+                    onPreviewError={handlePreviewError}
+                    onStderrData={handleTerminalData}
+                  />
           </div>
         </div>
       </div>

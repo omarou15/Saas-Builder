@@ -32,7 +32,13 @@ import { Badge } from "@/components/ui/badge";
 import { Separator } from "@/components/ui/separator";
 import { webContainerManager, type WCStatus } from "./webcontainer-manager";
 import { FileTree, useFileTree } from "./file-tree";
-import type { AgentEvent, FileChangePayload } from "@/types";
+import {
+  isFyrenConsoleMessage,
+  toConsoleLogEntry,
+  MAX_CONSOLE_LOGS,
+  MAX_BUILD_ERRORS,
+} from "./console-capture";
+import type { AgentEvent, FileChangePayload, ConsoleLogEntry, BuildError } from "@/types";
 
 // ─────────────────────────────────────────────
 // Types
@@ -41,6 +47,10 @@ import type { AgentEvent, FileChangePayload } from "@/types";
 export interface PreviewPanelProps {
   sessionId?: string;
   className?: string;
+  onConsoleLogs?: (logs: ConsoleLogEntry[]) => void;
+  onBuildErrors?: (errors: BuildError[]) => void;
+  onPreviewError?: (error: ConsoleLogEntry | BuildError) => void;
+  onStderrData?: (data: string) => void;
 }
 
 type Viewport = "desktop" | "tablet" | "mobile";
@@ -120,7 +130,14 @@ function StatusBadge({
 // PreviewPanel — main component
 // ─────────────────────────────────────────────
 
-export function PreviewPanel({ sessionId, className }: PreviewPanelProps) {
+export function PreviewPanel({
+  sessionId,
+  className,
+  onConsoleLogs,
+  onBuildErrors,
+  onPreviewError,
+  onStderrData,
+}: PreviewPanelProps) {
   const [status, setStatus] = useState<WCStatus>("idle");
   const [error, setError] = useState<string | undefined>();
   const [serverUrl, setServerUrl] = useState<string | null>(null);
@@ -130,6 +147,10 @@ export function PreviewPanel({ sessionId, className }: PreviewPanelProps) {
 
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const sseRef = useRef<EventSource | null>(null);
+
+  // Console logs & build errors (in-memory only)
+  const consoleLogsRef = useRef<ConsoleLogEntry[]>([]);
+  const buildErrorsRef = useRef<BuildError[]>([]);
 
   const { files, addOrUpdateFile, removeFile, setInitialFiles } =
     useFileTree();
@@ -159,12 +180,56 @@ export function PreviewPanel({ sessionId, className }: PreviewPanelProps) {
       setInitialFiles(paths);
     });
 
+    // Forward stderr to parent for terminal tab
+    const unsubStderr = webContainerManager.onStderr((data) => {
+      onStderrData?.(data);
+    });
+
+    // Listen for build errors from Vite stderr
+    const unsubBuildErrors = webContainerManager.onBuildError((errors) => {
+      buildErrorsRef.current = [
+        ...buildErrorsRef.current.slice(-(MAX_BUILD_ERRORS - errors.length)),
+        ...errors,
+      ];
+      onBuildErrors?.(buildErrorsRef.current);
+      // Notify parent of each error for auto-debug
+      for (const err of errors) {
+        if (err.severity === "error") {
+          onPreviewError?.(err);
+        }
+      }
+    });
+
     return () => {
       unsubStatus();
       unsubServer();
       unsubServer2();
+      unsubStderr();
+      unsubBuildErrors();
     };
-  }, [setInitialFiles]);
+  }, [setInitialFiles, onBuildErrors, onPreviewError, onStderrData]);
+
+  // ── Listen for console messages from iframe ─
+  useEffect(() => {
+    function handleMessage(event: MessageEvent) {
+      if (!isFyrenConsoleMessage(event.data)) return;
+
+      const entry = toConsoleLogEntry(event.data);
+      consoleLogsRef.current = [
+        ...consoleLogsRef.current.slice(-(MAX_CONSOLE_LOGS - 1)),
+        entry,
+      ];
+      onConsoleLogs?.(consoleLogsRef.current);
+
+      // Surface errors for auto-debug
+      if (entry.level === "error") {
+        onPreviewError?.(entry);
+      }
+    }
+
+    window.addEventListener("message", handleMessage);
+    return () => window.removeEventListener("message", handleMessage);
+  }, [onConsoleLogs, onPreviewError]);
 
   // ── Connect to SSE stream (file sync) ─────
 

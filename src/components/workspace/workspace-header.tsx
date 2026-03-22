@@ -4,7 +4,7 @@
 // Shows: project name, status badge, credits balance, deploy button.
 
 import Link from "next/link";
-import { ArrowLeft, Coins, Loader2 } from "lucide-react";
+import { ArrowLeft, Coins, Loader2, Zap } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -17,6 +17,8 @@ export interface WorkspaceHeaderProps {
   canDeploy: boolean;
   isDeploying: boolean;
   onDeploy: () => void;
+  autoFixEnabled?: boolean;
+  onAutoFixToggle?: () => void;
 }
 
 const STATUS_CONFIG: Record<
@@ -37,6 +39,8 @@ export function WorkspaceHeader({
   canDeploy,
   isDeploying,
   onDeploy,
+  autoFixEnabled,
+  onAutoFixToggle,
 }: WorkspaceHeaderProps) {
   const statusCfg = STATUS_CONFIG[projectStatus];
 
@@ -78,6 +82,23 @@ export function WorkspaceHeader({
           <Coins className="h-3 w-3 text-orange-400" />
           <span className="font-mono">${credits.toFixed(2)}</span>
         </div>
+      )}
+
+      {/* Auto-fix toggle */}
+      {onAutoFixToggle && (
+        <button
+          onClick={onAutoFixToggle}
+          title={autoFixEnabled ? "Auto-fix errors: ON" : "Auto-fix errors: OFF"}
+          className={cn(
+            "hidden items-center gap-1.5 rounded-md border px-2.5 py-1 text-xs font-medium transition-colors sm:flex",
+            autoFixEnabled
+              ? "border-orange-500/30 bg-orange-500/10 text-orange-400"
+              : "border-white/5 text-muted-foreground hover:text-foreground"
+          )}
+        >
+          <Zap className={cn("h-3 w-3", autoFixEnabled && "text-orange-400")} />
+          Auto-fix
+        </button>
       )}
 
       {/* Deploy button */}

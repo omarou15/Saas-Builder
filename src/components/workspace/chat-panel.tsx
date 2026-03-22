@@ -31,6 +31,7 @@ import {
   X,
   FileText,
   Globe,
+  Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -53,6 +54,17 @@ export interface ChatPanelProps {
   className?: string;
   onStageChange?: (stage: BuildStage, progress: number) => void;
   onAgentDone?: () => void;
+  /** Preview error to display as a banner with "Try to Fix" button */
+  pendingError?: {
+    type: "runtime" | "build";
+    message: string;
+    file?: string;
+    stack?: string;
+  } | null;
+  /** Called when user clicks "Try to Fix" */
+  onTryToFix?: () => void;
+  /** Called to dismiss the error banner */
+  onDismissError?: () => void;
 }
 
 interface ChatMessage {
@@ -285,6 +297,9 @@ export function ChatPanel({
   className,
   onStageChange,
   onAgentDone,
+  pendingError,
+  onTryToFix,
+  onDismissError,
 }: ChatPanelProps) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [activities, setActivities] = useState<ToolActivity[]>([]);
@@ -787,6 +802,40 @@ export function ChatPanel({
           >
             Dismiss
           </button>
+        </div>
+      )}
+
+      {/* Preview error banner — "Try to Fix" */}
+      {pendingError && (
+        <div className="border-t border-orange-500/20 bg-orange-500/5 px-4 py-2.5">
+          <div className="flex items-start gap-2">
+            <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-orange-400" />
+            <div className="flex-1 min-w-0">
+              <p className="text-xs font-medium text-orange-400">
+                {pendingError.type === "build" ? "Build error" : "Runtime error"} detected
+              </p>
+              <pre className="mt-1 text-[11px] text-muted-foreground whitespace-pre-wrap break-all max-h-20 overflow-y-auto font-mono">
+                {pendingError.message}
+                {pendingError.file && `\nFile: ${pendingError.file}`}
+              </pre>
+              <div className="mt-2 flex items-center gap-2">
+                <button
+                  onClick={onTryToFix}
+                  disabled={!sessionId || sending || streaming}
+                  className="flex items-center gap-1.5 rounded-md bg-orange-500 px-3 py-1 text-xs font-medium text-white transition-colors hover:bg-orange-400 disabled:opacity-40"
+                >
+                  <Zap className="h-3 w-3" />
+                  Try to Fix
+                </button>
+                <button
+                  onClick={onDismissError}
+                  className="text-xs text-muted-foreground/60 hover:text-muted-foreground transition-colors"
+                >
+                  Dismiss
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 

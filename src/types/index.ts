@@ -173,3 +173,34 @@ export interface BuildStatusPayload {
   message: string;
   progress: number; // 0-100
 }
+
+// ============================================================
+// DOMAINE : Preview Console & Auto-debug
+// ============================================================
+
+export type ConsoleLogLevel = "log" | "info" | "warn" | "error";
+
+export interface ConsoleLogEntry {
+  id: string;
+  level: ConsoleLogLevel;
+  message: string;
+  stack?: string;
+  timestamp: string;
+  source?: string; // file:line if available
+}
+
+export interface BuildError {
+  id: string;
+  file: string;
+  line?: number;
+  column?: number;
+  message: string;
+  severity: "error" | "warning";
+  timestamp: string;
+}
+
+export interface PreviewError {
+  type: "runtime" | "build";
+  entry: ConsoleLogEntry | BuildError;
+  timestamp: string;
+}

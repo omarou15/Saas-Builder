@@ -10,6 +10,8 @@
 // mount() NE peut PAS être appelé avant que boot() soit résolu.
 
 import { WebContainer, type FileSystemTree } from "@webcontainer/api";
+import { CONSOLE_CAPTURE_SCRIPT, parseBuildError } from "./console-capture";
+import type { BuildError } from "@/types";
 
 // ─────────────────────────────────────────────
 // Types
@@ -25,6 +27,8 @@ export type WCStatus =
 
 type StatusListener = (status: WCStatus, error?: string) => void;
 type ServerReadyListener = (url: string) => void;
+type StderrListener = (data: string) => void;
+type BuildErrorListener = (errors: BuildError[]) => void;
 
 // ─────────────────────────────────────────────
 // Starter template — React + Vite + Tailwind
@@ -74,6 +78,7 @@ const STARTER_TEMPLATE: FileSystemTree = {
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>FYREN Preview</title>
+    ${CONSOLE_CAPTURE_SCRIPT}
   </head>
   <body>
     <div id="root"></div>
@@ -192,6 +197,8 @@ class WebContainerManager {
 
   private statusListeners: Set<StatusListener> = new Set();
   private serverReadyListeners: Set<ServerReadyListener> = new Set();
+  private stderrListeners: Set<StderrListener> = new Set();
+  private buildErrorListeners: Set<BuildErrorListener> = new Set();
 
   private _status: WCStatus = "idle";
   private _serverUrl: string | null = null;
@@ -219,6 +226,16 @@ class WebContainerManager {
     // If server already running, notify immediately
     if (this._serverUrl) fn(this._serverUrl);
     return () => this.serverReadyListeners.delete(fn);
+  }
+
+  onStderr(fn: StderrListener): () => void {
+    this.stderrListeners.add(fn);
+    return () => this.stderrListeners.delete(fn);
+  }
+
+  onBuildError(fn: BuildErrorListener): () => void {
+    this.buildErrorListeners.add(fn);
+    return () => this.buildErrorListeners.delete(fn);
   }
 
   private emit(status: WCStatus, error?: string) {
@@ -355,7 +372,24 @@ class WebContainerManager {
 
     // Fire-and-forget — server keeps running until WC is torn down.
     // server-ready event (registered in boot()) will set status → "running".
-    void this.wc.spawn("npm", ["run", "dev"]);
+    void this.wc.spawn("npm", ["run", "dev"]).then((proc) => {
+      // Capture stderr for build error detection
+      // WebContainer process output is a ReadableStream<string>
+      void proc.output.pipeTo(
+        new WritableStream<string>({
+          write: (text: string) => {
+            // Notify raw stderr listeners
+            for (const fn of this.stderrListeners) fn(text);
+
+            // Parse and emit build errors
+            const errors = parseBuildError(text);
+            if (errors.length > 0) {
+              for (const fn of this.buildErrorListeners) fn(errors);
+            }
+          },
+        })
+      );
+    });
   }
 }
 

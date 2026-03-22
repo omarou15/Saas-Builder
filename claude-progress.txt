@@ -16,6 +16,7 @@ Dernière mise à jour : 22 mars 2026
 - [x] Session 8 — Frontend — landing (immersive/animée) + auth Clerk dark + dashboard + new project ✅
 - [x] Session 9 — Frontend — workspace (chat panel + preview panel + file tree + deploy) ✅
 - [x] Session 9.5 — Web Search + Upload fichiers + Vision ✅
+- [x] Session 9.7 — Auto-debug loop (console capture + Try to Fix + auto-fix) ✅
 - [x] Session 10 — Tests E2E (Playwright) + Deploy Vercel prod + Nettoyage final ✅
 
 ## À faire (ordre du build Phase 6)
@@ -28,6 +29,7 @@ Dernière mise à jour : 22 mars 2026
 - [x] Session 7 : Deploy pipeline — push GitHub (Octokit) + deploy Vercel + schema Supabase ✅
 - [x] Session 8 : Frontend — landing (immersive/animée) + auth dark + dashboard + new project ✅
 - [x] Session 9 : Frontend — workspace (chat panel + preview panel + file tree + deploy) ✅
+- [x] Session 9.7 : Auto-debug loop — console capture + build error parsing + Try to Fix + auto-fix ✅
 - [x] Session 10 : Tests E2E (3 flows Playwright) + deploy Vercel prod ✅
 
 ## Détail Session 1 (complété le 21 mars 2026)
@@ -791,3 +793,79 @@ e2e/
 - kebab-case fichiers
 - Imports absolus @/
 - Pas de barrel files
+
+## Détail Session 9.7 — Auto-debug loop (complété le 22 mars 2026)
+
+### Objectif
+Intercepter automatiquement les erreurs du preview WebContainer (console.error + build errors Vite/TS) et les renvoyer à l'agent pour un fix sans intervention humaine — comme Lovable.dev.
+
+### Architecture implémentée
+
+**Console Capture** : Script injecté dans le WebContainer index.html
+- Override console.log/warn/error/info → postMessage vers parent
+- Capture window.error + unhandledrejection
+- Zero dépendance — plain JS, pas de npm package
+
+**Build Error Parsing** : Regex parsers pour Vite/TypeScript stderr
+- Extrait file:line:column + message
+- Détecte erreurs et warnings
+
+**Auto-debug Flow** :
+1. Erreur détectée (console.error ou build error) → PreviewPanel
+2. PreviewPanel → onPreviewError callback → WorkspaceLayout
+3. WorkspaceLayout affiche erreur dans le ChatPanel (banner orange)
+4. User clique "Try to Fix" → POST /api/build/[sessionId]/message avec l'erreur
+5. L'agent reçoit l'erreur → lit le fichier → propose un fix → HMR
+6. Si auto-fix activé : l'étape 4 est automatique (sans clic)
+7. Rate limit : max 3 auto-fix consécutifs pour la même erreur
+
+### Fichiers créés
+
+**`src/components/preview/console-capture.ts`**
+- `CONSOLE_CAPTURE_SCRIPT` — script injecté dans l'iframe WebContainer
+- `isFyrenConsoleMessage()` / `toConsoleLogEntry()` — type guards
+- `parseBuildError()` — parser Vite/TS stderr → BuildError[]
+- Constantes MAX_CONSOLE_LOGS (500), MAX_BUILD_ERRORS (100)
+
+### Fichiers modifiés
+
+**`src/types/index.ts`**
+- Ajout : `ConsoleLogLevel`, `ConsoleLogEntry`, `BuildError`, `PreviewError`
+
+**`src/components/preview/webcontainer-manager.ts`**
+- Import + injection du CONSOLE_CAPTURE_SCRIPT dans le template index.html
+- Ajout listeners : `onStderr()`, `onBuildError()`
+- startDevServer() capture proc.output → parse build errors
+
+**`src/components/preview/preview-panel.tsx`**
+- Nouvelles props : `onConsoleLogs`, `onBuildErrors`, `onPreviewError`, `onStderrData`
+- window.addEventListener("message") pour les console logs iframe
+- Subscription aux build errors du webContainerManager
+- Forward stderr data vers parent
+
+**`src/components/workspace/workspace-layout.tsx`**
+- Nouveau state : consoleLogs, buildErrors, terminalLogs, pendingError, autoFixEnabled
+- `handlePreviewError()` — gère dedup + auto-fix avec rate limit (max 3)
+- `sendTryToFix()` — envoie l'erreur formatée à l'agent via POST
+- `handleTerminalData()` — stocke les stderr logs
+- BottomPanel rewrité : 4 onglets (Files, Console, Problems, Terminal)
+  - Console : logs colorés par niveau (error=red, warn=yellow, info=blue)
+  - Problems : build errors avec icône + file:line + message
+  - Terminal : raw stderr output du dev server
+  - Badges compteurs sur Console et Problems
+- ChatPanel wired avec pendingError, onTryToFix, onDismissError
+
+**`src/components/workspace/chat-panel.tsx`**
+- Nouvelles props : `pendingError`, `onTryToFix`, `onDismissError`
+- Banner orange "Error detected" avec Try to Fix (Zap icon) + Dismiss
+
+**`src/components/workspace/workspace-header.tsx`**
+- Nouvelles props : `autoFixEnabled`, `onAutoFixToggle`
+- Toggle "Auto-fix" dans le header (Zap icon, orange quand actif)
+
+### Règles respectées
+- Script injecté = minimal, zero dépendance
+- Logs en mémoire uniquement (pas de BDD)
+- Rate limit auto-fix = max 3 tentatives consécutives par erreur
+- Chaque auto-fix consomme des crédits (message normal)
+- TypeScript strict — 0 errors, 0 lint warnings
