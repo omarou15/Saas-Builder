@@ -25,6 +25,7 @@ import {
   Loader2,
   Files,
   X,
+  Check,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -300,16 +301,17 @@ export function PreviewPanel({
         <Separator orientation="vertical" className="mx-1 h-4" />
 
         {/* Viewport toggles */}
-        <div className="flex items-center rounded-md border p-0.5 gap-0.5">
+        <div className="flex items-center rounded-md border border-white/10 p-0.5 gap-0.5">
           {(["desktop", "tablet", "mobile"] as Viewport[]).map((v) => (
             <button
               key={v}
               onClick={() => setViewport(v)}
               title={VIEWPORT_CONFIG[v].label}
               className={cn(
-                "rounded p-1 transition-colors hover:bg-muted",
-                viewport === v && "bg-muted text-foreground",
-                viewport !== v && "text-muted-foreground"
+                "rounded p-1.5 transition-colors",
+                viewport === v
+                  ? "bg-white/10 text-foreground"
+                  : "text-muted-foreground/50 hover:text-muted-foreground hover:bg-white/5"
               )}
             >
               {VIEWPORT_CONFIG[v].icon}
@@ -371,7 +373,7 @@ export function PreviewPanel({
           {/* Loading / error states */}
           {status !== "running" && (
             <div className="flex h-full w-full items-center justify-center">
-              <div className="text-center space-y-3">
+              <div className="text-center space-y-4">
                 {status === "error" ? (
                   <>
                     <AlertCircle className="h-10 w-10 text-destructive mx-auto" />
@@ -390,18 +392,45 @@ export function PreviewPanel({
                     </Button>
                   </>
                 ) : (
-                  <>
-                    <Loader2 className="h-8 w-8 animate-spin text-muted-foreground mx-auto" />
-                    <p className="text-sm text-muted-foreground">
-                      {status === "booting" && "Démarrage du WebContainer…"}
-                      {status === "installing" && "Installation des dépendances…"}
-                      {status === "starting" && "Lancement du dev server Vite…"}
-                      {status === "idle" && "Initialisation…"}
-                    </p>
-                    <p className="text-xs text-muted-foreground/60">
+                  <div className="space-y-3 w-64">
+                    {/* Step-by-step progress */}
+                    {([
+                      { key: "booting", label: "Initialisation de l'environnement..." },
+                      { key: "installing", label: "Installation des dépendances..." },
+                      { key: "starting", label: "Démarrage du serveur de preview..." },
+                    ] as const).map((step) => {
+                      const order = ["idle", "booting", "installing", "starting", "running"];
+                      const currentIdx = order.indexOf(status);
+                      const stepIdx = order.indexOf(step.key);
+                      const isDone = currentIdx > stepIdx;
+                      const isCurrent = status === step.key;
+
+                      return (
+                        <div key={step.key} className="flex items-center gap-3">
+                          {isDone ? (
+                            <div className="flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-green-500/20">
+                              <Check className="h-3 w-3 text-green-400" />
+                            </div>
+                          ) : isCurrent ? (
+                            <Loader2 className="h-5 w-5 shrink-0 animate-spin text-orange-400" />
+                          ) : (
+                            <div className="h-5 w-5 shrink-0 rounded-full border border-white/10" />
+                          )}
+                          <span className={cn(
+                            "text-sm text-left",
+                            isDone && "text-muted-foreground/60",
+                            isCurrent && "text-foreground font-medium",
+                            !isDone && !isCurrent && "text-muted-foreground/30"
+                          )}>
+                            {step.label}
+                          </span>
+                        </div>
+                      );
+                    })}
+                    <p className="text-xs text-muted-foreground/40 pt-2">
                       Première ouverture — peut prendre ~30 s
                     </p>
-                  </>
+                  </div>
                 )}
               </div>
             </div>

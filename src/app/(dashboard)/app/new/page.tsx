@@ -29,7 +29,7 @@ export default function NewProjectPage() {
         throw new Error(data.error ?? "Failed to create project");
       }
 
-      router.push(`/app/project/${data.project!.id}`);
+      router.push(`/project/${data.project!.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
       setLoading(false);

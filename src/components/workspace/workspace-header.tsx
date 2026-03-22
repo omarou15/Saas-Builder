@@ -106,7 +106,12 @@ export function WorkspaceHeader({
         size="sm"
         disabled={!canDeploy || isDeploying}
         onClick={onDeploy}
-        className="h-8 bg-gradient-to-r from-orange-500 to-orange-600 text-xs font-semibold text-white hover:from-orange-400 hover:to-orange-500 disabled:opacity-40"
+        className={cn(
+          "h-8 text-xs font-semibold",
+          canDeploy && !isDeploying
+            ? "bg-gradient-to-r from-orange-500 to-orange-600 text-white hover:from-orange-400 hover:to-orange-500"
+            : "bg-white/5 text-muted-foreground cursor-not-allowed"
+        )}
       >
         {isDeploying ? (
           <>

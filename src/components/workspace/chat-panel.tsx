@@ -34,7 +34,6 @@ import {
   Zap,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import type {
   AgentEvent,
@@ -748,17 +747,30 @@ export function ChatPanel({
         <div className="flex flex-col gap-4 p-4">
           {messages.length === 0 && !streaming && (
             <div className="flex flex-col items-center justify-center py-16 text-center">
-              <div className="mb-3 flex h-12 w-12 items-center justify-center rounded-full bg-orange-500/10">
-                <Bot className="h-6 w-6 text-orange-400" />
+              <div className="mb-4 flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-500/20 to-orange-600/10 ring-1 ring-orange-500/20">
+                <Bot className="h-7 w-7 text-orange-400" />
               </div>
-              <p className="text-sm font-medium">FYREN Agent</p>
-              <p className="mt-1 max-w-xs text-xs text-muted-foreground">
-                Décris ton projet et l&apos;agent va construire ton app étape
-                par étape.
+              <p className="text-base font-semibold">FYREN Agent</p>
+              <p className="mt-2 max-w-sm text-sm text-muted-foreground">
+                Décris ton projet et l&apos;agent va construire ton app étape par étape.
               </p>
-              <p className="mt-2 max-w-xs text-xs text-muted-foreground/60">
-                Tu peux aussi envoyer des fichiers : screenshots, wireframes, PDF de specs, code existant.
-              </p>
+
+              {/* Suggestion chips */}
+              <div className="mt-6 flex flex-col gap-2 w-full max-w-sm">
+                {[
+                  "Je veux migrer mon app Lovable",
+                  "Je veux créer un SaaS from scratch",
+                  "J'ai un projet existant à améliorer",
+                ].map((suggestion) => (
+                  <button
+                    key={suggestion}
+                    onClick={() => setInput(suggestion)}
+                    className="rounded-xl border border-white/10 bg-white/[0.02] px-4 py-2.5 text-sm text-muted-foreground transition-all hover:border-orange-500/30 hover:bg-orange-500/[0.04] hover:text-foreground"
+                  >
+                    {suggestion}
+                  </button>
+                ))}
+              </div>
             </div>
           )}
 
@@ -854,18 +866,16 @@ export function ChatPanel({
 
       {/* Input area */}
       <div className="shrink-0 border-t border-white/5 p-3">
-        <div className="flex items-end gap-2">
+        <div className="flex items-end gap-2 rounded-xl border border-white/10 bg-white/[0.06] px-3 py-2 transition-colors focus-within:border-orange-500/30">
           {/* Upload button */}
-          <Button
-            variant="ghost"
-            size="icon"
-            className="h-10 w-10 shrink-0 text-muted-foreground hover:text-orange-400"
+          <button
             onClick={() => fileInputRef.current?.click()}
             disabled={!sessionId || sending}
             title="Joindre un fichier"
+            className="shrink-0 self-end pb-0.5 text-muted-foreground/50 transition-colors hover:text-orange-400 disabled:opacity-30"
           >
             <Paperclip className="h-4 w-4" />
-          </Button>
+          </button>
           <input
             ref={fileInputRef}
             type="file"
@@ -881,26 +891,28 @@ export function ChatPanel({
             onKeyDown={handleKeyDown}
             placeholder={
               sessionId
-                ? "Décris ce que tu veux construire…"
+                ? "Décris ton projet..."
                 : "Démarre une session pour envoyer un message"
             }
             disabled={!sessionId || sending}
             rows={1}
-            className="min-h-[40px] max-h-[120px] resize-none border-white/5 bg-white/[0.02] text-sm placeholder:text-muted-foreground/40 focus-visible:ring-orange-500/30"
+            className="min-h-[36px] max-h-[120px] resize-none border-0 bg-transparent p-0 text-sm shadow-none placeholder:text-muted-foreground/40 focus-visible:ring-0"
           />
-          <Button
-            size="icon"
+          <button
             onClick={() => void handleSend()}
             disabled={!canSend}
-            className="h-10 w-10 shrink-0 bg-orange-500 text-white hover:bg-orange-400 disabled:opacity-30"
+            className="shrink-0 self-end rounded-lg bg-orange-500 p-1.5 text-white transition-colors hover:bg-orange-400 disabled:bg-white/5 disabled:text-muted-foreground/30"
           >
             {sending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : (
               <Send className="h-4 w-4" />
             )}
-          </Button>
+          </button>
         </div>
+        <p className="mt-1.5 text-center text-[11px] text-muted-foreground/40">
+          Entrée pour envoyer · Shift+Entrée pour un retour à la ligne
+        </p>
       </div>
     </div>
   );

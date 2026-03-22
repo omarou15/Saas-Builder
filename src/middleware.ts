@@ -2,7 +2,8 @@ import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
 
 // Routes qui nécessitent une authentification
 const isProtectedRoute = createRouteMatcher([
-  "/app(.*)", // dashboard + workspace + toutes les sous-routes
+  "/app(.*)",      // dashboard (projets, billing, settings)
+  "/project(.*)",  // workspace (hors du layout dashboard)
 ]);
 
 // Routes publiques explicites (inutile de lister, mais clarifie l'intention)

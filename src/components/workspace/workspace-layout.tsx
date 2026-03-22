@@ -711,14 +711,14 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
 
             <ResizeHandle direction="vertical" />
 
-            {/* Bottom panel (file tree / logs) */}
+            {/* Bottom panel (file tree / logs) — collapsed by default */}
             <Panel
-              defaultSize={25}
+              defaultSize={5}
               minSize={5}
               maxSize={50}
               collapsible
               collapsedSize={3}
-              onResize={(size) => setBottomCollapsed(size.asPercentage <= 3)}
+              onResize={(size) => setBottomCollapsed(size.asPercentage <= 5)}
             >
               <BottomPanel
                 files={files}
