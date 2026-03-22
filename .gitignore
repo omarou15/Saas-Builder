@@ -1,0 +1,14 @@
+node_modules/
+.next/
+.env
+.env.local
+.env.production
+dist/
+.turbo/
+*.tsbuildinfo
+.vercel/
+
+.vercel
+
+# Claude Code personal config (non-projet)
+.claude/

@@ -1,0 +1,587 @@
+# État d'avancement — FYREN Platform
+Dernière mise à jour : 22 mars 2026
+
+## Complété
+- [x] Phase 0 — Recherche & Veille (docs/00-research.md)
+- [x] Phase 1 — Définition Produit (docs/01-product-definition.md)
+- [x] Phase 2 — Spécifications Techniques v2 avec Patch #1 (docs/02-technical-specs.md)
+- [x] Phase 3 — Validation Checklist (docs/03-validation-checklist.md)
+- [x] Phase 4 — Context Engineering (docs/04-context-engineering.md)
+- [x] Phase 5 — Distribution des tâches (docs/05-task-distribution.md)
+- [x] Session 1 — Setup projet Next.js + config TS/Tailwind/shadcn
+- [x] Session 2 — BDD Supabase + Auth Clerk + webhooks
+- [x] Session 3 — API routes projets + chat streaming
+- [x] Session 6 — WebContainers preview + sync fichiers ✅
+- [x] Session 7 — Deploy pipeline — push GitHub (Octokit) + Vercel setup + schema Supabase ✅
+- [x] Session 8 — Frontend — landing (immersive/animée) + auth Clerk dark + dashboard + new project ✅
+
+## En cours
+- [ ] Session 9 : Frontend — workspace (chat panel + preview panel + file tree)
+
+## À faire (ordre du build Phase 6)
+- [x] Session 1 : Setup projet Next.js + config TS/Tailwind/shadcn ✅
+- [x] Session 2 : BDD Supabase + Auth Clerk + webhooks ✅
+- [x] Session 3 : API routes — projets + chat streaming ✅
+- [x] Session 4 : API routes — connect (OAuth GitHub, API keys) + billing Stripe ✅
+- [x] Session 5 : Agent SDK — fork claude-agent-server + E2B + bridge WebSocket + 3 modes ✅
+- [x] Session 6 : Preview — WebContainers + sync fichiers via SSE ✅
+- [x] Session 7 : Deploy pipeline — push GitHub (Octokit) + deploy Vercel + schema Supabase ✅
+- [x] Session 8 : Frontend — landing (immersive/animée) + auth dark + dashboard + new project ✅
+- [ ] Session 9 : Frontend — workspace (chat panel + preview panel + file tree)
+- [ ] Session 10 : Tests E2E (3 flows Playwright) + deploy Vercel prod
+
+## Détail Session 1 (complété le 21 mars 2026)
+
+### Stack installée
+- Next.js 15.5.14 (App Router)
+- React 19.1.0
+- TypeScript 5 (strict: true, noImplicitAny, noUncheckedIndexedAccess)
+- Tailwind 4 + postcss
+- shadcn/ui (neutral, CSS variables, RSC)
+- ESLint 9 (next/core-web-vitals + next/typescript)
+- Prettier 3 + prettier-plugin-tailwindcss
+
+### Structure créée
+```
+src/
+  app/
+    (auth)/          → pages sign-in/sign-up (complété Session 2)
+    (dashboard)/app/ → dashboard + workspace (Sessions 8-9)
+    api/             → API routes (complété Session 3)
+    layout.tsx       → Root layout avec metadata FYREN
+    page.tsx         → Landing placeholder
+    globals.css      → CSS variables shadcn/ui (oklch, dark mode)
+  components/
+    ui/              → shadcn/ui components installés
+  lib/
+    utils.ts         → cn(), slugify(), sanitizeForLog()
+    crypto.ts        → encrypt/decrypt AES-256-GCM (API keys client)
+    supabase.ts      → Client Supabase typé (mis à jour Session 3)
+    rate-limit.ts    → Rate limiter in-memory (créé Session 3)
+    credits.ts       → Helpers crédits FYREN (créé Session 3)
+  server/
+    build-pipeline.ts → State machine 8 étapes + STAGE_CONFIG
+  types/
+    index.ts         → Types métier partagés
+    database.ts      → Types BDD Supabase + RPC deduct_credits (mis à jour Session 3)
+```
+
+## Détail Session 2 (complété le 21 mars 2026)
+
+### Packages installés
+- svix (vérification signature webhook Clerk)
+
+### Supabase — Schéma de données
+
+**Migration** : `supabase/migrations/20260321000000_initial_schema.sql`
+
+Tables créées (toutes avec RLS activé) :
+- `users` — clerk_id UNIQUE, credits DECIMAL(10,2), trigger updated_at
+- `projects` — user_id FK, status CHECK, slug UNIQUE, trigger updated_at
+- `service_connections` — project_id FK, (project_id, service) UNIQUE, config JSONB chiffré
+- `conversations` — project_id FK, type CHECK
+- `messages` — conversation_id FK, tokens_used INTEGER, cost_usd DECIMAL(8,4)
+- `credit_transactions` — user_id FK, type CHECK (purchase/usage/refund/welcome), amount DECIMAL(10,2)
+
+Vue : `user_credit_balance` (SECURITY INVOKER)
+
+Policies RLS initiales (remplacées en Session 3) :
+- users : SELECT + UPDATE own row ; INSERT = service role only
+- projects : ALL USING user_id = auth.uid()
+- service_connections : ALL via subquery projects → user
+- conversations : ALL via subquery projects → user
+- messages : ALL via subquery conversations → projects → user
+- credit_transactions : SELECT own only ; INSERT = service role only
+
+### Supabase — Client typé
+
+**src/lib/supabase.ts** :
+- `getSupabaseClient()` — client anon (RLS appliqué)
+- `createAuthenticatedClient(token)` — passe le JWT Clerk dans Authorization header (Session 3)
+- `createServiceClient()` — service role uniquement côté serveur
+
+**src/types/database.ts** :
+- Types Database complets Row/Insert/Update/Relationships
+- Compatible @supabase/supabase-js v2.49+ (__InternalSupabase + PostgrestVersion: "12")
+- Shorthand : DbUser, DbProject, DbServiceConnection, DbConversation, DbMessage, DbCreditTransaction
+- RPC deduct_credits typé (ajouté Session 3)
+
+### Auth — Clerk
+
+**src/middleware.ts** :
+- clerkMiddleware() protège /app/* → redirect /sign-in
+- /api/webhooks/* non protégé (auth par signature svix)
+
+**src/app/layout.tsx** : ClerkProvider wrapping HTML root
+
+**Pages auth** :
+- src/app/(auth)/sign-in/[[...sign-in]]/page.tsx → <SignIn />
+- src/app/(auth)/sign-up/[[...sign-up]]/page.tsx → <SignUp />
+
+### Webhook Clerk — POST /api/webhooks/clerk
+
+**src/app/api/webhooks/clerk/route.ts** :
+1. Vérification signature svix AVANT traitement (règle critique)
+2. user.created → INSERT users + INSERT credit_transactions (welcome $2.00)
+3. user.updated → UPDATE users (email + name)
+4. user.deleted → DELETE users (cascade FK automatique)
+5. Events non gérés → 200 (évite retries Clerk)
+
+### Types mis à jour — src/types/index.ts
+- Ajout : User, Conversation, CreditTransactionType (avec 'welcome')
+- Ajout : FileChangePayload, BuildStatusPayload
+- Re-exports Db* depuis database.ts
+
+## Détail Session 3 (complété le 21 mars 2026)
+
+### Packages installés
+- `ai` (Vercel AI SDK) + `@ai-sdk/openai` (provider OpenAI-compat pour OpenRouter)
+
+### Migration — fix RLS Clerk JWT
+**supabase/migrations/20260321000001_fix_rls_clerk_jwt.sql**
+
+Problème résolu : auth.uid() retourne NULL avec les JWTs Clerk (clerk_id = "user_xxx", pas un UUID).
+Solution : policies réécrites avec `(auth.jwt() ->> 'sub')` (comparaison TEXT via clerk_id).
+
+Tables mises à jour : users, projects, service_connections, conversations, messages, credit_transactions.
+
+Nouvelle fonction RPC Postgres : `deduct_credits(p_user_id, p_amount, p_description, p_project_id?)`
+- SECURITY DEFINER (droits service role)
+- Atomique : lock FOR UPDATE + UPDATE users + INSERT credit_transactions en une transaction
+- Lance exception `insufficient_credits:` si solde insuffisant
+- REVOKE ALL FROM PUBLIC (seul le service role peut appeler)
+
+**PREREQUISITE** : appliquer cette migration + configurer Supabase pour accepter les JWTs Clerk :
+- Supabase Dashboard → Project Settings → Auth → Third-party auth providers → Add Clerk
+- JWKS URL : https://<clerk-domain>/.well-known/jwks.json
+
+### src/lib/supabase.ts — mise à jour
+- Ajout `createAuthenticatedClient(clerkToken)` : passe le JWT Clerk dans Authorization header
+- Permet aux queries d'appliquer les RLS avec auth.jwt() ->> 'sub'
+
+### src/lib/rate-limit.ts
+- Rate limiter in-memory (Map global par process)
+- Fonction `rateLimit(key, limit, windowMs)` → `{ allowed, remaining, resetAt }`
+- Pruning automatique des entrées expirées
+- Note : single-instance (dev + Vercel single-region). Pour multi-instance → Upstash Redis.
+
+### src/lib/credits.ts
+- `getUserByClerkId(clerkId)` → `{ id: string, credits: number } | null`
+- `getUserCredits(userId)` → `number`
+- `deductCredits(userId, amount, description, projectId?)` → via RPC Postgres atomique
+- `InsufficientCreditsError` — classe d'erreur typée
+- `toCreditCost(openrouterCostUsd)` → `costUsd × 3` (règle métier)
+- `estimateCost(model, inputTokens, outputTokens)` → USD estimé avant appel LLM
+
+### API routes créées
+
+**GET /api/projects** (60 req/min)
+- Liste projets du user connecté (filtre user_id = FYREN UUID)
+- Auth Clerk → lookup clerk_id → FYREN UUID → service client
+
+**POST /api/projects** (10 req/min)
+- Validation Zod : `{ name: string(1-100) }`
+- Génération slug unique (slugify + suffixe aléatoire + fallback timestamp)
+- Retourne le projet créé (201)
+
+**GET /api/projects/[id]** (60 req/min)
+- Détail projet + CDC (cdc_json inclus)
+- Double vérification ownership : filtre user_id dans la query
+
+**PATCH /api/projects/[id]** (30 req/min)
+- Validation Zod : name?, status?, cdc_json?, stack_config?, sandbox_id? (au moins 1 champ)
+- Ownership vérifié AVANT update + ownership redondant dans le UPDATE
+- Cast JSONB explicite (Json | null) pour satisfaire types Supabase
+
+**GET /api/projects/[id]/conversations** (30 req/min)
+- Retourne toutes les conversations + messages imbriqués (JOIN via select)
+- Vérification ownership du projet
+
+**POST /api/projects/[id]/conversations** (10 req/min)
+- Crée une conversation (type: intake | build | iterate)
+- Déclenché automatiquement quand un projet change de mode
+
+**POST /api/chat** (30 req/min)
+- Validation Zod : messages[], projectId UUID, conversationId? UUID, model, systemPrompt?
+- Modèles autorisés : allowlist explicite (claude-sonnet-4-5, haiku-4-5, gpt-4o, gpt-4o-mini, gemini-2.0-flash)
+- Vérification crédits AVANT l'appel LLM (seuil $0.01 minimum) — règle critique FYREN
+- Vérification ownership du projet
+- Création automatique d'une conversation intake si conversationId absent
+- Sauvegarde du message user AVANT le stream
+- Stream SSE via Vercel AI SDK `toTextStreamResponse()` (pas WebSocket)
+- Header `x-conversation-id` dans la response pour que le client récupère l'ID
+- onFinish : sauvegarde message assistant (tokens, cost_usd) + débit crédits atomique
+- InsufficientCreditsError après stream → log only (stream déjà envoyé)
+
+### Modèles OpenRouter configurés (src/app/api/chat/route.ts)
+| Modèle | Input $/M | Output $/M |
+|--------|-----------|------------|
+| anthropic/claude-sonnet-4-5 | $3.00 | $15.00 |
+| anthropic/claude-haiku-4-5  | $0.80 | $4.00  |
+| openai/gpt-4o               | $2.50 | $10.00 |
+| openai/gpt-4o-mini          | $0.15 | $0.60  |
+| google/gemini-2.0-flash     | $0.10 | $0.40  |
+
+## Décisions prises
+- Claude Agent SDK via claude-agent-server fork (pas Sandbox Agent, pas wrapper custom)
+- E2B pour le sandbox ($0.05/hr, Firecracker)
+- WebContainers dès le MVP (pas preview côté sandbox)
+- Skills UI/UX Tier 1 pré-embarqués
+- Briques Dyad réutilisées (Apache 2.0) : GitHub, Vercel, Supabase handlers
+- Build pipeline : state machine 8 étapes dans /src/server/build-pipeline.ts
+- Pay-per-use : crédits (coût OpenRouter × 3), pas d'abonnement
+- RLS activé sur TOUTES les tables sans exception
+- Service role Supabase : webhook Clerk + billing + débit crédits (jamais côté browser)
+- Types Supabase manuels ; à regénérer avec `supabase gen types typescript` après création projet
+- Rate limiting in-memory (Map) en attendant Upstash Redis
+- API routes : service role + filtre manuel ownership (double protection : RLS JWT + query filter)
+- Chat stream : SSE via Vercel AI SDK `toTextStreamResponse()` (pas WebSocket pour cette route)
+
+## Détail Session 4 (complété le 21 mars 2026)
+
+### Corrections
+- **crypto.ts** : importKey supporte désormais les clés hex 64-chars (matching ENCRYPTION_KEY hex dans .env.local)
+
+### Packages installés
+- `stripe` (SDK Stripe officiel, API version 2026-02-25.clover)
+
+### Env vars ajoutés
+- `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY` — pk_test_51SuatD0...
+- `STRIPE_SECRET_KEY` — sk_test_51SuatD0...
+- `STRIPE_WEBHOOK_SECRET` — à renseigner via `stripe listen --forward-to localhost:3000/api/webhooks/stripe`
+
+### Routes créées
+
+**Connect** :
+- `POST /api/connect/github` — échange code OAuth → access_token GitHub, chiffre AES-256-GCM, upsert service_connections
+- `POST /api/connect/service` — API key manuelle (supabase/clerk/stripe/resend/vercel) + ping test live + chiffrement avant INSERT
+- `GET /api/connect/[projectId]` — liste connexions (service + status uniquement, JAMAIS les keys)
+
+**Billing** :
+- `POST /api/billing/purchase` — Stripe Checkout Session (mode payment, montants $5/$20/$50/custom min $5)
+- `GET /api/billing/credits` — solde crédits actuel
+- `GET /api/billing/usage` — historique transactions avec pagination (limit/offset)
+- `POST /api/webhooks/stripe` — vérification signature + idempotence + checkout.session.completed → INSERT credit_transaction + UPDATE users.credits
+
+### Règles sécurité respectées
+- Toutes les API keys chiffrées avant INSERT
+- GET /connect retourne seulement service+status (jamais les keys)
+- Jamais de keys dans les logs
+- Zod + rate limiting sur tous les endpoints
+- Ownership projet vérifié sur chaque opération
+- Signature Stripe vérifiée AVANT tout traitement webhook
+
+## Détail Session 5 (complété le 21 mars 2026)
+
+### Packages installés
+- `e2b` (v2.14.1) — E2B sandbox SDK (Firecracker microVMs)
+- `@anthropic-ai/sdk` (v0.80.0) — Anthropic SDK (non utilisé directement dans le runner, disponible pour usages futurs)
+
+### Architecture implémentée
+
+**Pattern** : Agent loop local (FYREN backend) + E2B sandbox pour filesystem/execution
+- L'agent tourne sur le backend FYREN (pas de subprocess claude)
+- L'agent utilise des tools custom qui délèguent les opérations fichier/commande à E2B
+- Les événements remontent via EventEmitter → SSE stream au frontend
+- Pas de dépendance au binaire `claude` — loop manuel via Vercel AI SDK v6
+
+### Fichiers créés
+
+**`src/server/agent/prompts.ts`**
+- `INTAKE_PROMPT` — consultant produit IA, interdit de coder, output = CDC JSON structuré
+- `BUILD_PROMPT` — dev senior full-stack, standards stricts (TypeScript strict, Zod, RLS)
+- `ITERATE_PROMPT` — pair programmer, modifications ciblées, lecture avant écriture
+
+**`src/server/agent/sandbox-manager.ts`**
+- `createSandbox()` → Sandbox E2B + init /workspace/ (package.json, next.config, tsconfig, tailwind, layout, page)
+- `connectSandbox(id)` → reconnexion sandbox existant
+- `destroySandbox()` → kill + nettoyage
+- `keepSandboxAlive()` → étend timeout sandbox
+- `sandboxReadFile/WriteFile/DeleteFile/ListFiles/Run` → opérations filesystem E2B
+- Heartbeat : 5 min interval (CLAUDE.md pitfall résolu)
+
+**`src/server/agent/tools.ts`**
+- 7 tools conformes ai v6 (`inputSchema: zodSchema(...)` not `parameters`)
+- `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep`, `Delete`, `ListFiles`
+- Chaque tool execute via E2B sandbox
+- `FileChangeCallback` → déclenche event `file_change` pour sync preview
+- `INTAKE_TOOLS`, `BUILD_TOOLS`, `ITERATE_TOOLS` — sets restreints par mode
+
+**`src/server/agent/session-store.ts`**
+- `AgentSession` : sessionId, projectId, userId, sandbox, mode, emitter, conversationHistory (`ModelMessage[]`), status, heartbeatInterval
+- `createSession/getSession/deleteSession/sessionBelongsTo`
+- `emitEvent/emitDone/emitError` — bus d'événements
+- `startHeartbeat/stopHeartbeat` — gestion lifecycle sandbox
+
+**`src/server/agent/agent-runner.ts`**
+- `runAgentStep(session, userMessage)` — loop agent complet (generateText + stopWhen + onStepFinish)
+- ai v6 : `stopWhen: stepCountIs(n)` instead of `maxSteps`
+- Émet : `assistant_message`, `tool_use`, `tool_result`, `file_change`, `step_done`, `error`
+- Token counting → credit deduction (règle coût × 3)
+- Sanitisation des inputs Bash (redact keys/tokens)
+- `runBuildStage(session, stage, context)` — entry point pour le build pipeline
+- Persistence messages en BDD (conversations/messages)
+
+### API routes créées
+
+**`POST /api/build/start`** (3 req/min)
+- Crée sandbox E2B + initialise /workspace/
+- Vérifie crédits (min $0.50)
+- Crée conversation en BDD
+- Update projects.status + sandbox_id
+- Démarre heartbeat
+- Retourne { sessionId, sandboxId, conversationId }
+
+**`GET /api/build/[sessionId]/stream`** (SSE)
+- ReadableStream backed by EventEmitter
+- Ping heartbeat SSE : 25s (anti-proxy-timeout)
+- Header `X-Accel-Buffering: no` (Nginx)
+- runtime: "nodejs" (pas Edge — EventEmitter ne passe pas Edge)
+
+**`POST /api/build/[sessionId]/message`** (20 req/min)
+- Vérifie crédits, ownership, status (pas de double-run)
+- Fire-and-forget runAgentStep — retourne { ok, status } immédiatement
+- Events fluent via SSE
+
+**`GET /api/build/[sessionId]`** — info session
+**`DELETE /api/build/[sessionId]`** — destroy sandbox + session + clear sandbox_id en BDD
+
+### src/server/build-pipeline.ts — mise à jour
+- Tous les STAGE_CONFIG remplis avec system prompts réels
+- Champ `label` (pour l'UI) + `progressOnComplete` (0-100)
+- `buildStagePrompt(stage, cdc)` — génère le premier message pour chaque stage
+- Prompts dédiés : `buildScaffoldPrompt`, `buildDbPrompt`, `buildReviewPrompt`
+
+### src/types/index.ts — mise à jour
+- `AgentMode = "intake" | "build" | "iterate"`
+- `AgentSessionStatus = "idle" | "running" | "done" | "error"`
+- `AgentSessionInfo` — type info session (pour l'UI)
+- `AgentEventType` + `step_done` ajouté
+
+### Décisions techniques
+- ai v6 API : `inputSchema: zodSchema(...)` (pas `parameters`), `stopWhen: stepCountIs(n)` (pas `maxSteps`), `ModelMessage` (pas `CoreMessage`), `toolCall.input` (pas `args`), `toolResult.output` (pas `result`)
+- Agent loop local (pas subprocess) = compatible Vercel + pas de binaire
+- SSE + POST (pas true WebSocket) = compatible Vercel serverless (WebSocket V2 pour Session 9)
+- In-memory session store = single-instance OK pour MVP
+
+## Détail Session 6 (complété le 21 mars 2026)
+
+### Packages installés
+- `@webcontainer/api` (v1.6.1) — WebContainer API officielle StackBlitz
+
+### next.config.ts — headers COOP/COEP
+WebContainers requiert Cross-Origin Isolation (SharedArrayBuffer / WASM threads).
+Headers ajoutés sur `/app/:path*` (workspace uniquement, pas les pages auth) :
+- `Cross-Origin-Opener-Policy: same-origin`
+- `Cross-Origin-Embedder-Policy: require-corp`
+
+### src/components/preview/webcontainer-manager.ts
+Singleton module-level (un seul WebContainer par tab navigateur).
+
+**Cycle de vie** :
+1. `boot()` → `WebContainer.boot()` (async) — résolution OBLIGATOIRE avant toute opération fs
+2. `mount(STARTER_TEMPLATE)` — template React/Vite/Tailwind monté APRÈS boot
+3. `npm install` → `npm run dev` — Vite dev server démarre
+4. Event `server-ready(port, url)` → l'URL est passée à l'iframe
+
+**Template monté** (React 18 + Vite 6 + Tailwind 3 + TypeScript strict) :
+- `package.json`, `index.html`, `vite.config.ts`, `tsconfig.json`
+- `postcss.config.js`, `tailwind.config.js`
+- `src/main.tsx`, `src/App.tsx`, `src/index.css`
+
+**API publique** :
+- `boot()` — idempotent (safe à appeler plusieurs fois)
+- `writeFile(agentPath, content)` — strip `/workspace/` prefix + mkdir -p parent
+- `deleteFile(agentPath)` — suppression silencieuse
+- `listFiles(dir?)` — listing récursif (exclut node_modules, .git)
+- `onStatus(fn)` / `onServerReady(fn)` — listeners avec cleanup (retournent `() => void`)
+
+**Piège CLAUDE.md respecté** : mount() appelé UNIQUEMENT après await WebContainer.boot()
+
+### src/components/preview/file-tree.tsx
+Composant `FileTree` + hook `useFileTree`.
+
+**FileTree** :
+- Props : `files: string[]` (chemins plats), `selectedPath?`, `onSelectFile?`
+- Construit l'arbre récursif depuis les chemins plats (buildTree)
+- Tri : dossiers en premier, alphabétique à l'intérieur
+- Collapsible (ChevronRight animé), icônes Folder/File (lucide-react)
+- Profondeur infinie avec padding progressif
+
+**useFileTree** :
+- `addOrUpdateFile(path)` — ajoute un fichier (normalize /workspace/)
+- `removeFile(path)` — retire un fichier
+- `setInitialFiles(paths[])` — remplace tout (scan initial post-boot)
+
+### src/components/preview/preview-panel.tsx
+Composant `PreviewPanel` ('use client').
+
+**Props** : `sessionId?` (si fourni → connexion SSE), `className?`
+
+**Status flow** : idle → booting → installing → starting → running (ou error)
+
+**Toolbar** :
+- StatusBadge avec spinner animé (booting/installing/starting) ou dot vert pulsant (running)
+- Viewport toggle : Desktop (100%) / Tablet (768px) / Mobile (375px)
+- URL pill (quand running) — affiche l'URL localhost sans protocole
+- Bouton Files (toggle arbre) + bouton Refresh (force reload iframe via key)
+
+**Preview area** :
+- État non-running : loading spinner + message contextuel selon le status
+- État running : iframe avec `sandbox="allow-scripts allow-same-origin allow-forms allow-popups"`
+- Sidebar file tree (collapsible via bouton Files)
+
+**Sync SSE → WebContainer** :
+- `EventSource` sur `/api/build/[sessionId]/stream`
+- Écoute les `file_change` events (type = "file_change", payload = FileChangePayload)
+- `create` / `update` → `writeFile` + `addOrUpdateFile`
+- `delete` → `deleteFile` + `removeFile`
+- Lignes `: ping` SSE ignorées silencieusement
+- Cleanup automatique (close EventSource) au unmount ou changement de sessionId
+
+### Décisions techniques
+- WebContainer monté avec Tailwind 3 (pas 4) — Tailwind 4 + Vite dans WC non testé en prod
+- COEP appliqué à `/app/*` seulement pour ne pas casser les pages Clerk (sign-in/sign-up)
+- `webContainerManager` exporté comme singleton de module (pas React context) — disponible sans Provider
+- SSE (EventSource) plutôt que WebSocket pour le sync — cohérent avec le reste du backend FYREN
+- `iframeKey` incrémenté au refresh pour forcer reload sans changer src
+
+## Problèmes ouverts
+- Licence commerciale WebContainers : contacter StackBlitz
+- E2B idle timeout : heartbeat implémenté ✅, évaluer Fly Machines en V2
+- Token GitHub exposé dans un chat → Omar doit le révoquer immédiatement
+- IMPORTANT : appliquer migration 20260321000001_fix_rls_clerk_jwt.sql en prod
+- IMPORTANT : configurer Supabase pour accepter JWTs Clerk (Third-party auth providers)
+  Voir : https://clerk.com/docs/integrations/databases/supabase
+- Rate limiter in-memory : ne fonctionne pas en multi-instance Vercel → migrer vers Upstash Redis
+- CLERK_WEBHOOK_SECRET dans .env.local est vide → renseigner depuis Clerk Dashboard
+- STRIPE_WEBHOOK_SECRET dans .env.local est vide → `stripe listen --forward-to localhost:3000/api/webhooks/stripe`
+- GITHUB_CLIENT_ID + GITHUB_CLIENT_SECRET vides → créer OAuth App sur github.com/settings/developers
+- COEP require-corp : vérifier que Clerk UserButton fonctionne dans /app/* (peut nécessiter crossOriginIsolated: credentialless)
+
+## Détail Session 7 (complété le 21 mars 2026)
+
+### Packages installés
+- @octokit/rest (SDK GitHub officiel — push repo)
+- @vercel/sdk (SDK Vercel officiel — create project + env vars)
+
+### Fichiers créés
+```
+src/server/deploy/
+  github.ts        → Push /workspace/ sandbox vers le repo GitHub client (Octokit)
+  vercel.ts        → Création projet Vercel + injection env vars (Vercel SDK)
+  supabase.ts      → Application schema SQL sur le Supabase client (REST API)
+  index.ts         → Orchestrateur séquentiel avec gestion erreurs + persist DB
+  utils.ts         → sanitizeForLog, errorMessage, sleep
+
+src/app/api/deploy/
+  route.ts         → POST /api/deploy — stream SSE progression en temps réel
+```
+
+### Architecture deploy pipeline
+
+```
+POST /api/deploy (SSE stream)
+  │
+  ├── Stage 1: GitHub push
+  │     Octokit → create/update repo → atomic commit (git tree API)
+  │     → repoUrl + repoFullName
+  │
+  ├── Stage 2: Vercel setup
+  │     @vercel/sdk → createProject (Next.js, lié au repo GitHub)
+  │     → injectEnvVars (encrypted, upsert=true)
+  │     → deploymentUrl (push GitHub déclenche le deploy automatiquement)
+  │
+  ├── Stage 3: Supabase schema
+  │     REST API pg-meta + rpc fallback → split SQL statements → exec séquentiel
+  │
+  └── Stage 4: Persist
+        supabase.projects.update(status="deployed", stack_config={urls})
+```
+
+### Règles de sécurité respectées
+- Tokens déchiffrés en mémoire au moment de l'usage, jamais persistés en clair
+- sanitizeForLog sur TOUS les messages de log et d'erreur
+- Env vars client injectées sur LEUR Vercel, pas sur le nôtre
+- L'agent ne voit JAMAIS les tokens (il reçoit seulement "tu as accès au GitHub du client")
+- Erreur partielle : si Vercel échoue, le code GitHub est conservé (ownership client)
+
+## Détail Session 8 (complété le 22 mars 2026)
+
+### Packages installés
+- `framer-motion` — animations scroll-driven, parallax, reveal au scroll
+
+### Fonts & Branding
+- **Space Grotesk** (--font-sans) — typographie distinctive, bold, tech premium
+- **JetBrains Mono** (--font-mono) — code blocks
+- Couleur primaire : orange #f97316 (gradient to #ea580c)
+- Dark mode par défaut (html class="dark")
+- CSS custom : fyren-glow, fyren-text-gradient, noise-bg, custom scrollbar
+
+### Root layout (src/app/layout.tsx)
+- ClerkProvider avec thème dark (variables orange)
+- Space Grotesk + JetBrains Mono via next/font/google
+- html class="dark" par défaut
+
+### Landing page (/) — Immersive & animée
+**Composants créés** :
+```
+src/components/landing/
+  landing-page.tsx     → Page complète avec 7 sections animées
+  animated-counter.tsx → Compteurs animés (scroll-triggered)
+  code-rain.tsx        → Canvas animation (code rain orange, matrix-style)
+  typing-code.tsx      → Code qui s'écrit en temps réel (faux build demo)
+  preview-mockup.tsx   → Browser mockup animé (preview de l'app générée)
+```
+
+**Sections** :
+1. **Hero** — "Build it. Own it." avec parallax scroll, code rain background, badge animé, stats avec counters
+2. **Problem** — Lock-in / Crédits brûlés / Pas production-ready — cards animées + animation chaînes qui se brisent (Lock → Unlock)
+3. **How it works** — 3 étapes (Décris → Build → Deploy) avec progress line animée au scroll
+4. **Demo** — Split view : code qui s'écrit (TypingCode) + preview qui se construit (PreviewMockup)
+5. **Stack/Features** — 6 cards (GitHub, Vercel, Supabase, Sécurité, Preview live, Multi-modèle) avec scale-in
+6. **Pricing** — Tableau interactif pay-per-use avec animations de ligne
+7. **CTA final** — "Prêt à construire ?" avec glow effect
+
+**Animations** : FadeUp, ScaleIn (scroll-triggered, once), parallax hero, spring-based progress line, animated counters, typing effect, staggered cards
+
+**Navbar** : fixed, backdrop-blur, logo FYREN gradient, links + CTA
+**Footer** : minimal, branding
+
+### Auth pages
+- `/sign-in` et `/sign-up` — FYREN logo, background glow, Clerk dark theme
+- Sign-up : mention "$2 de crédits offerts"
+
+### Dashboard (/app)
+**Layout** (src/app/(dashboard)/app/layout.tsx) :
+- Sidebar responsive (desktop: visible, mobile: slide-over avec overlay)
+- Nav items : Projects, New project, Billing, Settings
+- UserButton Clerk en bas de sidebar
+- Mobile header avec burger menu
+
+**Dashboard page** (src/components/dashboard/dashboard-content.tsx) :
+- Fetch GET /api/projects
+- Project cards : nom, slug, status badge (coloré), date, link vers /app/project/[id]
+- Empty state : CTA "New project" avec illustration
+- Loading state : spinner
+- Error state : message
+
+**Status badges** : Draft (zinc), Intake (blue), Building (orange), Deployed (green), Archived (zinc)
+
+### New project (/app/new)
+- Formulaire nom (max 100 chars)
+- POST /api/projects → redirect /app/project/[id]
+- Loading/error states
+- Auto-focus input
+
+### Project detail (/app/project/[id])
+- Placeholder pour Session 9 (workspace)
+- Auth check server-side
+
+### Conventions respectées
+- TypeScript strict — 0 errors
+- Server Components par défaut (dashboard page = server, content = client)
+- 'use client' uniquement pour les composants interactifs
+- kebab-case fichiers, PascalCase composants
+- Imports absolus @/
+- Pas de barrel files
