@@ -657,7 +657,7 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
               <Group orientation="horizontal">
                 {/* Chat panel */}
                 <Panel defaultSize={40} minSize={25} maxSize={60}>
-                  <div className="relative h-full">
+                  <div className="relative h-full min-w-0">
                     <ChatPanel
                       projectId={project.id}
                       sessionId={sessionId}

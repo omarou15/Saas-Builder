@@ -252,8 +252,15 @@ class WebContainerManager {
       throw new Error("WebContainerManager.boot() must be called in the browser");
     }
 
-    // Already booted
-    if (this.wc) return;
+    // Already booted and running — nothing to do
+    if (this.wc) {
+      // If server is already ready, re-notify listeners (component remount)
+      if (this._serverUrl) {
+        this.emit("running");
+        for (const fn of this.serverReadyListeners) fn(this._serverUrl);
+      }
+      return;
+    }
 
     // Already booting — wait for the in-flight promise
     if (this.bootPromise) {
@@ -265,6 +272,7 @@ class WebContainerManager {
 
     try {
       // CRITIQUE : boot() doit résoudre AVANT tout appel fs ou mount (CLAUDE.md)
+      // WebContainer.boot() ne peut être appelé qu'UNE SEULE FOIS par page.
       this.bootPromise = WebContainer.boot();
       this.wc = await this.bootPromise;
 
@@ -284,14 +292,36 @@ class WebContainerManager {
       // Start the dev server (fire-and-forget — keeps running)
       this.startDevServer();
     } catch (err) {
-      this.emit(
-        "error",
-        err instanceof Error ? err.message : "WebContainer boot failed"
-      );
-      // Reset so callers can retry
+      const msg = err instanceof Error ? err.message : "WebContainer boot failed";
+
+      // "Unable to create more instances" = WebContainer already booted in this page.
+      // Do NOT reset — the instance is alive, we just can't boot a second one.
+      if (msg.includes("Unable to create more instances")) {
+        this.emit("error", msg);
+        // Keep bootPromise so future calls don't try to boot again
+        return;
+      }
+
+      this.emit("error", msg);
+      // Reset so callers can retry on transient failures
       this.bootPromise = null;
       this.wc = null;
       throw err;
+    }
+  }
+
+  /**
+   * Teardown the WebContainer instance. Call on page unmount.
+   */
+  teardown(): void {
+    if (this.wc) {
+      this.wc.teardown();
+      this.wc = null;
+      this.bootPromise = null;
+      this._status = "idle";
+      this._serverUrl = null;
+      this._error = undefined;
+      this.emit("idle");
     }
   }
 

@@ -719,7 +719,7 @@ export function ChatPanel({
 
   return (
     <div
-      className={cn("flex h-full flex-col bg-background", className)}
+      className={cn("flex h-full min-w-0 flex-col bg-background", className)}
       onDragOver={handleDragOver}
       onDragLeave={handleDragLeave}
       onDrop={handleDrop}
