@@ -234,6 +234,79 @@ export function createAgentTools(sandbox: Sandbox, onFileChange: FileChangeCallb
     }),
 
     // ----------------------------------------------------------
+    // WebSearch — search the internet for documentation, packages, etc.
+    // ----------------------------------------------------------
+    WebSearch: tool({
+      description:
+        "Search the internet for information. Use this to look up documentation, npm packages, API references, examples, or any web content. Returns relevant search results with snippets.",
+      inputSchema: zodSchema(
+        z.object({
+          query: z
+            .string()
+            .describe("Search query (e.g. 'next.js 15 app router middleware', 'zod validation examples')"),
+        })
+      ),
+      execute: async ({ query }: { query: string }) => {
+        try {
+          // Use a simple fetch to a search API
+          // In production, this would use a proper search API (Tavily, Serper, etc.)
+          // For now, use DuckDuckGo instant answer API as a free fallback
+          const encodedQuery = encodeURIComponent(query);
+          const res = await fetch(
+            `https://api.duckduckgo.com/?q=${encodedQuery}&format=json&no_html=1&skip_disambig=1`,
+            { signal: AbortSignal.timeout(10_000) }
+          );
+
+          if (!res.ok) {
+            return `Search failed (${res.status}). Try a different query.`;
+          }
+
+          const data = (await res.json()) as {
+            AbstractText?: string;
+            AbstractSource?: string;
+            AbstractURL?: string;
+            RelatedTopics?: Array<{
+              Text?: string;
+              FirstURL?: string;
+            }>;
+            Answer?: string;
+          };
+
+          const parts: string[] = [];
+
+          if (data.Answer) {
+            parts.push(`Answer: ${data.Answer}`);
+          }
+
+          if (data.AbstractText) {
+            parts.push(`${data.AbstractSource ?? "Source"}: ${data.AbstractText}`);
+            if (data.AbstractURL) {
+              parts.push(`URL: ${data.AbstractURL}`);
+            }
+          }
+
+          if (data.RelatedTopics) {
+            const topics = data.RelatedTopics
+              .filter((t) => t.Text)
+              .slice(0, 5)
+              .map((t) => `- ${t.Text}${t.FirstURL ? ` (${t.FirstURL})` : ""}`);
+            if (topics.length > 0) {
+              parts.push(`\nRelated:\n${topics.join("\n")}`);
+            }
+          }
+
+          if (parts.length === 0) {
+            return `No results found for "${query}". Try rephrasing your search.`;
+          }
+
+          return parts.join("\n\n");
+        } catch (err) {
+          return `Search error: ${err instanceof Error ? err.message : "timeout or network issue"}. Try again.`;
+        }
+      },
+    }),
+
+    // ----------------------------------------------------------
     // ListFiles — list files in a directory
     // ----------------------------------------------------------
     ListFiles: tool({
@@ -275,7 +348,7 @@ function globToRegex(pattern: string): string {
 
 export type AgentToolName = keyof ReturnType<typeof createAgentTools>;
 
-export const INTAKE_TOOLS: AgentToolName[] = ["Read", "ListFiles"];
+export const INTAKE_TOOLS: AgentToolName[] = ["Read", "ListFiles", "WebSearch"];
 
 export const BUILD_TOOLS: AgentToolName[] = [
   "Read",
@@ -286,6 +359,7 @@ export const BUILD_TOOLS: AgentToolName[] = [
   "Grep",
   "Delete",
   "ListFiles",
+  "WebSearch",
 ];
 
 export const ITERATE_TOOLS: AgentToolName[] = [
@@ -297,4 +371,5 @@ export const ITERATE_TOOLS: AgentToolName[] = [
   "Grep",
   "Delete",
   "ListFiles",
+  "WebSearch",
 ];

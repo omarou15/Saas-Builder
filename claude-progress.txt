@@ -15,6 +15,7 @@ Dernière mise à jour : 22 mars 2026
 - [x] Session 7 — Deploy pipeline — push GitHub (Octokit) + Vercel setup + schema Supabase ✅
 - [x] Session 8 — Frontend — landing (immersive/animée) + auth Clerk dark + dashboard + new project ✅
 - [x] Session 9 — Frontend — workspace (chat panel + preview panel + file tree + deploy) ✅
+- [x] Session 9.5 — Web Search + Upload fichiers + Vision ✅
 
 ## En cours
 - [ ] Session 10 : Tests E2E (3 flows Playwright) + deploy Vercel prod
@@ -674,3 +675,71 @@ src/app/(dashboard)/app/project/[id]/
 - Imports absolus @/
 - Pas de barrel files
 - Dark mode cohérent (orange #f97316, Space Grotesk, JetBrains Mono)
+
+## Détail Session 9.5 (complété le 22 mars 2026)
+
+### Packages installés
+- `pdf-parse` (v1.1.1) — extraction texte PDF côté serveur
+- `sharp` — redimensionnement images > 5MB avant envoi au LLM
+
+### Fonctionnalité 1 : Web Search (agent peut chercher sur internet)
+
+**`src/server/agent/tools.ts`** — nouveau tool `WebSearch` :
+- Tool AI SDK v6 avec inputSchema Zod (`query: string`)
+- Utilise DuckDuckGo Instant Answer API (gratuit, pas de clé requise)
+- Retourne : AbstractText, Answer, RelatedTopics (max 5)
+- Timeout 10s, gestion d'erreurs propre
+- Ajouté dans INTAKE_TOOLS, BUILD_TOOLS et ITERATE_TOOLS
+
+**Chat panel** — indicateur spécifique WebSearch :
+- Icône Globe bleue (au lieu de Wrench orange pour les autres tools)
+- Affiche la query de recherche : `Recherche web "next.js app router middleware"`
+
+### Fonctionnalité 2 : Upload fichiers
+
+**`POST /api/upload`** (`src/app/api/upload/route.ts`) :
+- Multipart/form-data, champ "file"
+- Limite 10MB par fichier
+- Auth Clerk + rate limit 30/min
+- Types supportés :
+  - PDF → pdf-parse → texte (tronqué à 50K chars)
+  - Images (PNG/JPG/WebP/GIF) → base64 (redimensionné si > 5MB via sharp)
+  - Code/texte (30+ extensions) → texte brut (tronqué à 100K chars)
+- sanitizeForLog sur tous les noms de fichiers
+- Pas de stockage permanent — traitement en mémoire
+
+**`POST /api/build/[sessionId]/message`** — mise à jour :
+- Nouveau champ `attachments?: Array<{ type, content, filename, mimeType }>` (max 5)
+- Validation Zod
+- Attachments passés au `runAgentStep`
+
+**Chat panel** — UI upload :
+- Bouton Paperclip à côté de l'input
+- Drag & drop sur toute la zone de chat (overlay orange avec instructions)
+- Preview des fichiers en attente (miniature pour images, nom+icône pour fichiers)
+- Bouton X pour retirer un fichier
+- Indicateurs : uploading (spinner), error (rouge), success (preview)
+- Accept : PDF, images, code/texte
+- Les fichiers apparaissent aussi dans les bulles de message utilisateur
+
+### Fonctionnalité 3 : Vision (agent voit les images)
+
+**`src/server/agent/agent-runner.ts`** — messages multimodaux :
+- Nouvelle fonction `buildUserMessage(text, attachments)` :
+  - Texte seul → `{ role: "user", content: string }`
+  - Avec images → `{ role: "user", content: [{ type: "text", text }, { type: "image", image }] }`
+  - Fichiers texte → contenu concaténé au message avec header `--- Fichier : nom ---`
+- Compatible Vercel AI SDK v6 format multimodal
+
+**`src/types/index.ts`** — nouveau type :
+- `MessageAttachment { type: "text" | "image", content, filename, mimeType? }`
+
+### Type declaration
+- `src/types/pdf-parse.d.ts` — déclaration de types pour pdf-parse v1
+
+### Conventions respectées
+- TypeScript strict — 0 errors
+- Build Next.js clean (0 lint errors)
+- Pas de stockage de fichiers en BDD (éphémère, en mémoire)
+- sanitizeForLog sur les noms de fichiers
+- Images > 5MB redimensionnées avant envoi LLM (optimisation coût tokens)

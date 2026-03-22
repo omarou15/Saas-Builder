@@ -9,6 +9,9 @@
 //   4. Show tool_use events as activity indicators
 //   5. Show stage_change events as progress steps
 //   6. Show "agent is thinking…" indicator during streaming
+//   7. Upload files (images, PDF, code) → POST /api/upload → inject in message
+//   8. Drag & drop files onto the chat area
+//   9. Show WebSearch activity with a specific indicator
 
 import {
   useCallback,
@@ -24,6 +27,10 @@ import {
   Wrench,
   ChevronRight,
   AlertCircle,
+  Paperclip,
+  X,
+  FileText,
+  Globe,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -33,6 +40,7 @@ import type {
   AgentEventType,
   BuildStage,
   Message,
+  MessageAttachment,
 } from "@/types";
 
 // ─────────────────────────────────────────────
@@ -52,6 +60,7 @@ interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   timestamp: string;
+  attachments?: UploadedFile[];
 }
 
 interface ToolActivity {
@@ -59,6 +68,15 @@ interface ToolActivity {
   name: string;
   description: string;
   timestamp: string;
+}
+
+interface UploadedFile {
+  type: "text" | "image";
+  content: string;
+  filename: string;
+  mimeType?: string;
+  uploading?: boolean;
+  error?: string;
 }
 
 // Build pipeline stages for the progress display
@@ -73,6 +91,15 @@ const STAGE_LABELS: Record<string, string> = {
   deploy: "Deploy",
   done: "Done",
 };
+
+const ACCEPTED_FILE_TYPES = [
+  "application/pdf",
+  "image/png", "image/jpeg", "image/webp", "image/gif",
+  "text/plain", "text/html", "text/css", "text/markdown",
+  "application/json", "application/javascript", "application/typescript",
+].join(",");
+
+const MAX_FILE_SIZE_MB = 10;
 
 // ─────────────────────────────────────────────
 // Message bubble
@@ -113,6 +140,14 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             : "bg-white/[0.03] text-foreground"
         )}
       >
+        {/* Attached files preview */}
+        {msg.attachments && msg.attachments.length > 0 && (
+          <div className="mb-2 flex flex-wrap gap-2">
+            {msg.attachments.map((f, i) => (
+              <AttachmentPreview key={`${f.filename}-${i}`} file={f} compact />
+            ))}
+          </div>
+        )}
         <div className="whitespace-pre-wrap break-words">{msg.content}</div>
       </div>
     </div>
@@ -124,15 +159,84 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
 // ─────────────────────────────────────────────
 
 function ToolActivityItem({ activity }: { activity: ToolActivity }) {
+  const isWebSearch = activity.name === "WebSearch";
+
   return (
     <div className="flex items-center gap-2 py-1 pl-10 text-xs text-muted-foreground">
-      <Wrench className="h-3 w-3 shrink-0 text-orange-400/60" />
+      {isWebSearch ? (
+        <Globe className="h-3 w-3 shrink-0 text-blue-400/60" />
+      ) : (
+        <Wrench className="h-3 w-3 shrink-0 text-orange-400/60" />
+      )}
       <span className="truncate">
-        <span className="font-medium text-muted-foreground/80">{activity.name}</span>
+        <span className={cn(
+          "font-medium",
+          isWebSearch ? "text-blue-400/80" : "text-muted-foreground/80"
+        )}>
+          {isWebSearch ? "Recherche web" : activity.name}
+        </span>
         {activity.description && (
           <span className="ml-1 text-muted-foreground/50">{activity.description}</span>
         )}
       </span>
+    </div>
+  );
+}
+
+// ─────────────────────────────────────────────
+// Attachment preview (in input area and in messages)
+// ─────────────────────────────────────────────
+
+function AttachmentPreview({
+  file,
+  compact,
+  onRemove,
+}: {
+  file: UploadedFile;
+  compact?: boolean;
+  onRemove?: () => void;
+}) {
+  const isImage = file.type === "image";
+
+  return (
+    <div
+      className={cn(
+        "relative flex items-center gap-2 rounded-lg border border-white/5 bg-white/[0.02]",
+        compact ? "px-2 py-1" : "px-2.5 py-1.5"
+      )}
+    >
+      {file.uploading && (
+        <Loader2 className="h-3 w-3 shrink-0 animate-spin text-orange-400" />
+      )}
+      {file.error && (
+        <AlertCircle className="h-3 w-3 shrink-0 text-red-400" />
+      )}
+      {!file.uploading && !file.error && (
+        isImage ? (
+          // eslint-disable-next-line @next/next/no-img-element
+          <img
+            src={file.content}
+            alt={file.filename}
+            className="h-8 w-8 rounded object-cover"
+          />
+        ) : (
+          <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" />
+        )
+      )}
+      <span className={cn(
+        "truncate text-xs",
+        file.error ? "text-red-400" : "text-muted-foreground"
+      )}>
+        {file.error ?? file.filename}
+      </span>
+      {onRemove && (
+        <button
+          onClick={onRemove}
+          className="ml-1 shrink-0 rounded p-0.5 text-muted-foreground/50 transition-colors hover:text-foreground"
+        >
+          <X className="h-3 w-3" />
+        </button>
+      )}
     </div>
   );
 }
@@ -190,11 +294,14 @@ export function ChatPanel({
   const [currentStage, setCurrentStage] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
+  const [pendingFiles, setPendingFiles] = useState<UploadedFile[]>([]);
+  const [isDragOver, setIsDragOver] = useState(false);
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const sseRef = useRef<EventSource | null>(null);
   const streamingContentRef = useRef("");
   const streamingMsgIdRef = useRef<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   // ── Auto-scroll to bottom ──────────────────
   const scrollToBottom = useCallback(() => {
@@ -215,7 +322,6 @@ export function ChatPanel({
           id: string;
           messages: Message[];
         }>;
-        // Flatten all messages from all conversations
         const allMessages: ChatMessage[] = [];
         for (const conv of convos) {
           for (const msg of conv.messages ?? []) {
@@ -227,7 +333,6 @@ export function ChatPanel({
             });
           }
         }
-        // Sort by timestamp
         allMessages.sort(
           (a, b) =>
             new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
@@ -235,7 +340,7 @@ export function ChatPanel({
         setMessages(allMessages);
         scrollToBottom();
       } catch {
-        // Non-fatal — empty chat is fine
+        // Non-fatal
       }
     }
     void loadHistory();
@@ -285,7 +390,6 @@ export function ChatPanel({
           setStreaming(true);
 
           if (!streamingMsgIdRef.current) {
-            // Start new streaming message
             const id = `stream-${Date.now()}`;
             streamingMsgIdRef.current = id;
             streamingContentRef.current = text;
@@ -299,7 +403,6 @@ export function ChatPanel({
               },
             ]);
           } else {
-            // Append to existing streaming message
             streamingContentRef.current += text;
             const currentContent = streamingContentRef.current;
             const currentId = streamingMsgIdRef.current;
@@ -315,15 +418,28 @@ export function ChatPanel({
 
         case "tool_use": {
           const payload = event.payload as {
+            tool?: string;
             name?: string;
+            input?: Record<string, unknown>;
             description?: string;
           };
+          const toolName = payload.tool ?? payload.name ?? "tool";
+          let description = payload.description ?? "";
+
+          // Special handling for WebSearch — show the query
+          if (toolName === "WebSearch" && payload.input) {
+            const query = (payload.input as { query?: string }).query;
+            if (query) {
+              description = `"${query}"`;
+            }
+          }
+
           setActivities((prev) => [
             ...prev,
             {
               id: `tool-${Date.now()}-${Math.random()}`,
-              name: payload.name ?? "tool",
-              description: payload.description ?? "",
+              name: toolName,
+              description,
               timestamp: event.timestamp,
             },
           ]);
@@ -351,7 +467,6 @@ export function ChatPanel({
           const payload = event.payload as {
             stage?: string;
             progress?: number;
-            message?: string;
           };
           if (payload.progress !== undefined) {
             setProgress(payload.progress);
@@ -363,7 +478,6 @@ export function ChatPanel({
         }
 
         case "step_done": {
-          // Finalize the streaming message
           streamingMsgIdRef.current = null;
           streamingContentRef.current = "";
           setStreaming(false);
@@ -391,30 +505,171 @@ export function ChatPanel({
     [scrollToBottom, onStageChange, onAgentDone]
   );
 
+  // ── Upload file ────────────────────────────
+  const uploadFile = useCallback(async (file: File) => {
+    if (file.size > MAX_FILE_SIZE_MB * 1024 * 1024) {
+      setPendingFiles((prev) => [
+        ...prev,
+        {
+          type: "text",
+          content: "",
+          filename: file.name,
+          error: `Trop volumineux (${(file.size / 1024 / 1024).toFixed(1)}MB > ${MAX_FILE_SIZE_MB}MB)`,
+        },
+      ]);
+      return;
+    }
+
+    // Add placeholder
+    const placeholder: UploadedFile = {
+      type: file.type.startsWith("image/") ? "image" : "text",
+      content: "",
+      filename: file.name,
+      uploading: true,
+    };
+
+    setPendingFiles((prev) => [...prev, placeholder]);
+
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+
+      const res = await fetch("/api/upload", {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = (await res.json()) as {
+        type?: "text" | "image";
+        content?: string;
+        filename?: string;
+        mimeType?: string;
+        error?: string;
+      };
+
+      if (!res.ok || data.error) {
+        setPendingFiles((prev) =>
+          prev.map((f) =>
+            f === placeholder
+              ? { ...f, uploading: false, error: data.error ?? "Upload failed" }
+              : f
+          )
+        );
+        return;
+      }
+
+      setPendingFiles((prev) =>
+        prev.map((f) =>
+          f === placeholder
+            ? {
+                type: data.type ?? "text",
+                content: data.content ?? "",
+                filename: data.filename ?? file.name,
+                mimeType: data.mimeType,
+                uploading: false,
+              }
+            : f
+        )
+      );
+    } catch (err) {
+      setPendingFiles((prev) =>
+        prev.map((f) =>
+          f === placeholder
+            ? {
+                ...f,
+                uploading: false,
+                error: err instanceof Error ? err.message : "Upload failed",
+              }
+            : f
+        )
+      );
+    }
+  }, []);
+
+  // ── Handle file input change ───────────────
+  const handleFileSelect = useCallback(
+    (e: React.ChangeEvent<HTMLInputElement>) => {
+      const files = e.target.files;
+      if (!files) return;
+      for (const file of Array.from(files)) {
+        void uploadFile(file);
+      }
+      // Reset input so the same file can be selected again
+      e.target.value = "";
+    },
+    [uploadFile]
+  );
+
+  // ── Drag & drop ────────────────────────────
+  const handleDragOver = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(true);
+  }, []);
+
+  const handleDragLeave = useCallback((e: React.DragEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setIsDragOver(false);
+  }, []);
+
+  const handleDrop = useCallback(
+    (e: React.DragEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setIsDragOver(false);
+
+      const files = e.dataTransfer.files;
+      for (const file of Array.from(files)) {
+        void uploadFile(file);
+      }
+    },
+    [uploadFile]
+  );
+
+  // ── Remove pending file ────────────────────
+  const removePendingFile = useCallback((index: number) => {
+    setPendingFiles((prev) => prev.filter((_, i) => i !== index));
+  }, []);
+
   // ── Send message ───────────────────────────
   const handleSend = useCallback(async () => {
     const text = input.trim();
-    if (!text || !sessionId || sending || streaming) return;
+    const validFiles = pendingFiles.filter((f) => !f.uploading && !f.error);
+    if ((!text && validFiles.length === 0) || !sessionId || sending || streaming) return;
 
     setSending(true);
     setError(null);
+
+    // Build attachments for the API
+    const attachments: MessageAttachment[] = validFiles.map((f) => ({
+      type: f.type,
+      content: f.content,
+      filename: f.filename,
+      mimeType: f.mimeType,
+    }));
 
     // Optimistic: add user message immediately
     const userMsg: ChatMessage = {
       id: `user-${Date.now()}`,
       role: "user",
-      content: text,
+      content: text || (validFiles.length > 0 ? `[${validFiles.map((f) => f.filename).join(", ")}]` : ""),
       timestamp: new Date().toISOString(),
+      attachments: validFiles,
     };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
+    setPendingFiles([]);
     scrollToBottom();
 
     try {
       const res = await fetch(`/api/build/${sessionId}/message`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({
+          message: text || `Voici ${validFiles.length} fichier(s) : ${validFiles.map((f) => f.filename).join(", ")}`,
+          attachments: attachments.length > 0 ? attachments : undefined,
+        }),
       });
 
       if (!res.ok) {
@@ -428,7 +683,7 @@ export function ChatPanel({
     } finally {
       setSending(false);
     }
-  }, [input, sessionId, sending, streaming, scrollToBottom]);
+  }, [input, pendingFiles, sessionId, sending, streaming, scrollToBottom]);
 
   // ── Handle Enter key ──────────────────────
   const handleKeyDown = useCallback(
@@ -441,12 +696,37 @@ export function ChatPanel({
     [handleSend]
   );
 
+  // ── Derived state ──────────────────────────
+  const hasUploadingFiles = pendingFiles.some((f) => f.uploading);
+  const hasValidFiles = pendingFiles.some((f) => !f.uploading && !f.error);
+  const canSend = sessionId && !sending && !streaming && !hasUploadingFiles && (input.trim() || hasValidFiles);
+
   // ── Render ─────────────────────────────────
 
   return (
-    <div className={cn("flex h-full flex-col bg-background", className)}>
+    <div
+      className={cn("flex h-full flex-col bg-background", className)}
+      onDragOver={handleDragOver}
+      onDragLeave={handleDragLeave}
+      onDrop={handleDrop}
+    >
       {/* Stage progress */}
       <StageProgress currentStage={currentStage} progress={progress} />
+
+      {/* Drag overlay */}
+      {isDragOver && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-2 rounded-xl border-2 border-dashed border-orange-500/50 bg-orange-500/5 px-8 py-6">
+            <Paperclip className="h-8 w-8 text-orange-400" />
+            <p className="text-sm font-medium text-orange-400">
+              Dépose tes fichiers ici
+            </p>
+            <p className="text-xs text-muted-foreground">
+              PDF, images, code — max {MAX_FILE_SIZE_MB}MB
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Messages area */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto">
@@ -460,6 +740,9 @@ export function ChatPanel({
               <p className="mt-1 max-w-xs text-xs text-muted-foreground">
                 Décris ton projet et l&apos;agent va construire ton app étape
                 par étape.
+              </p>
+              <p className="mt-2 max-w-xs text-xs text-muted-foreground/60">
+                Tu peux aussi envoyer des fichiers : screenshots, wireframes, PDF de specs, code existant.
               </p>
             </div>
           )}
@@ -507,9 +790,42 @@ export function ChatPanel({
         </div>
       )}
 
+      {/* Pending files preview */}
+      {pendingFiles.length > 0 && (
+        <div className="flex flex-wrap gap-2 border-t border-white/5 px-3 py-2">
+          {pendingFiles.map((file, idx) => (
+            <AttachmentPreview
+              key={`${file.filename}-${idx}`}
+              file={file}
+              onRemove={() => removePendingFile(idx)}
+            />
+          ))}
+        </div>
+      )}
+
       {/* Input area */}
       <div className="shrink-0 border-t border-white/5 p-3">
         <div className="flex items-end gap-2">
+          {/* Upload button */}
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-10 w-10 shrink-0 text-muted-foreground hover:text-orange-400"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={!sessionId || sending}
+            title="Joindre un fichier"
+          >
+            <Paperclip className="h-4 w-4" />
+          </Button>
+          <input
+            ref={fileInputRef}
+            type="file"
+            className="hidden"
+            accept={ACCEPTED_FILE_TYPES}
+            multiple
+            onChange={handleFileSelect}
+          />
+
           <Textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -526,7 +842,7 @@ export function ChatPanel({
           <Button
             size="icon"
             onClick={() => void handleSend()}
-            disabled={!sessionId || !input.trim() || sending || streaming}
+            disabled={!canSend}
             className="h-10 w-10 shrink-0 bg-orange-500 text-white hover:bg-orange-400 disabled:opacity-30"
           >
             {sending ? (

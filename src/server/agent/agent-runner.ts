@@ -24,7 +24,7 @@ import type { AgentSession } from "./session-store";
 import { INTAKE_PROMPT, BUILD_PROMPT, ITERATE_PROMPT } from "./prompts";
 import { deductCredits, toCreditCost, estimateCost } from "@/lib/credits";
 import { createServiceClient } from "@/lib/supabase";
-import type { AgentEvent, AgentMode, FileChangePayload } from "@/types";
+import type { AgentEvent, AgentMode, FileChangePayload, MessageAttachment } from "@/types";
 import { sanitizeForLog } from "@/lib/utils";
 
 // ============================================================
@@ -70,7 +70,11 @@ const MODE_MAX_TURNS: Record<AgentMode, number> = {
  * Run one agent step: takes a user message, executes the agent loop,
  * and emits all events to session.emitter.
  */
-export async function runAgentStep(session: AgentSession, userMessage: string): Promise<void> {
+export async function runAgentStep(
+  session: AgentSession,
+  userMessage: string,
+  attachments?: MessageAttachment[]
+): Promise<void> {
   if (session.status === "running") {
     emitError(session, "Agent is already running. Wait for the current step to finish.");
     return;
@@ -86,8 +90,8 @@ export async function runAgentStep(session: AgentSession, userMessage: string): 
   };
   emitEvent(session, userEvent);
 
-  // Append user message to conversation history
-  const userMsg: ModelMessage = { role: "user", content: userMessage };
+  // Build user message — multimodal if attachments include images
+  const userMsg = buildUserMessage(userMessage, attachments);
   session.conversationHistory.push(userMsg);
 
   // File changes accumulated during this step
@@ -293,6 +297,57 @@ function sanitizeToolInput(toolName: string, input: unknown): unknown {
     return { command: sanitized };
   }
   return input;
+}
+
+/**
+ * Build a user message, potentially multimodal (text + images).
+ * Text attachments are appended to the message content.
+ * Image attachments are sent as image parts for vision.
+ */
+function buildUserMessage(
+  text: string,
+  attachments?: MessageAttachment[]
+): ModelMessage {
+  if (!attachments || attachments.length === 0) {
+    return { role: "user", content: text };
+  }
+
+  // Separate text and image attachments
+  const textParts: string[] = [text];
+  const imageParts: Array<{ type: "image"; image: URL | string; mimeType?: string }> = [];
+
+  for (const attachment of attachments) {
+    if (attachment.type === "text") {
+      textParts.push(`\n\n--- Fichier : ${attachment.filename} ---\n${attachment.content}`);
+    } else if (attachment.type === "image") {
+      // Extract base64 data from data URL
+      const base64Match = attachment.content.match(/^data:([^;]+);base64,(.+)$/);
+      if (base64Match) {
+        imageParts.push({
+          type: "image",
+          image: attachment.content,
+          mimeType: base64Match[1],
+        });
+      }
+    }
+  }
+
+  // If no images, return a simple text message with appended file contents
+  if (imageParts.length === 0) {
+    return { role: "user", content: textParts.join("") };
+  }
+
+  // Multimodal message: text + images
+  // Vercel AI SDK v6 supports content arrays with text and image parts
+  const content: Array<
+    | { type: "text"; text: string }
+    | { type: "image"; image: URL | string; mimeType?: string }
+  > = [
+    { type: "text", text: textParts.join("") },
+    ...imageParts,
+  ];
+
+  return { role: "user", content } as ModelMessage;
 }
 
 /** Persist assistant message to conversations/messages tables */

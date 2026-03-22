@@ -161,6 +161,13 @@ export interface FileChangePayload {
   operation: "create" | "update" | "delete";
 }
 
+export interface MessageAttachment {
+  type: "text" | "image";
+  content: string;
+  filename: string;
+  mimeType?: string;
+}
+
 export interface BuildStatusPayload {
   stage: BuildStage;
   message: string;

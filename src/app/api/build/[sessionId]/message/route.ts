@@ -3,7 +3,7 @@
 // This endpoint returns immediately (fire-and-forget); events flow via SSE.
 //
 // Rate limit: 20 req/min
-// Body: { message: string, stageContext?: string }
+// Body: { message: string, attachments?: Attachment[] }
 // Returns: { ok: true, status: "running" }
 
 import { auth } from "@clerk/nextjs/server";
@@ -17,8 +17,16 @@ import { createServiceClient } from "@/lib/supabase";
 
 const MIN_CREDITS = 0.01;
 
+const AttachmentSchema = z.object({
+  type: z.enum(["text", "image"]),
+  content: z.string(),
+  filename: z.string(),
+  mimeType: z.string().optional(),
+});
+
 const MessageSchema = z.object({
   message: z.string().min(1).max(10_000),
+  attachments: z.array(AttachmentSchema).max(5).optional(),
 });
 
 export async function POST(
@@ -61,7 +69,7 @@ export async function POST(
     );
   }
 
-  const { message } = parsed.data;
+  const { message, attachments } = parsed.data;
 
   // Lookup FYREN user
   const user = await getUserByClerkId(clerkId);
@@ -117,9 +125,17 @@ export async function POST(
     });
   }
 
+  // Build attachments for multimodal support
+  const parsedAttachments = attachments?.map((a) => ({
+    type: a.type as "text" | "image",
+    content: a.content,
+    filename: a.filename,
+    mimeType: a.mimeType,
+  }));
+
   // Run agent step asynchronously — do NOT await (fire-and-forget)
   // Events will flow through the SSE stream
-  runAgentStep(session, message).catch((err) => {
+  runAgentStep(session, message, parsedAttachments).catch((err) => {
     console.error(
       "[build/message] Unhandled agent error:",
       err instanceof Error ? err.message : err
