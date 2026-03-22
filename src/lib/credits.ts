@@ -3,6 +3,7 @@
 // (pas de RLS bypass intentionnel — c'est le seul endroit autorisé à écrire).
 
 import { createServiceClient } from "@/lib/supabase";
+import { clerkClient } from "@clerk/nextjs/server";
 
 /**
  * Retourne le solde crédits d'un user (par son FYREN UUID).
@@ -59,7 +60,6 @@ export async function getOrCreateUserByClerkId(
   let email = `${clerkId}@pending.fyren.app`;
   let name: string | null = null;
   try {
-    const { clerkClient } = await import("@clerk/nextjs/server");
     const client = await clerkClient();
     const clerkUser = await client.users.getUser(clerkId);
     email = clerkUser.emailAddresses[0]?.emailAddress ?? email;
