@@ -2,7 +2,7 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { createServiceClient } from "@/lib/supabase";
-import { getUserByClerkId } from "@/lib/credits";
+import { getUserByClerkId, getOrCreateUserByClerkId } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 import { slugify } from "@/lib/utils";
 
@@ -38,10 +38,10 @@ export async function GET(): Promise<NextResponse> {
     );
   }
 
-  // Lookup user FYREN
+  // Lookup user FYREN — si pas encore dans la BDD, retourner une liste vide
   const user = await getUserByClerkId(clerkId);
   if (!user) {
-    return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
+    return NextResponse.json([] );
   }
 
   // Requête BDD — RLS n'est pas actif ici (service role), on filtre manuellement
@@ -57,7 +57,7 @@ export async function GET(): Promise<NextResponse> {
     return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 
-  return NextResponse.json({ projects: projects ?? [] });
+  return NextResponse.json(projects ?? []);
 }
 
 // ============================================================
@@ -100,10 +100,13 @@ export async function POST(req: Request): Promise<NextResponse> {
     );
   }
 
-  // Lookup user FYREN
-  const user = await getUserByClerkId(clerkId);
-  if (!user) {
-    return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
+  // Lookup ou création du user FYREN (auto-sync si webhook Clerk pas encore reçu)
+  let user: { id: string; credits: number };
+  try {
+    user = await getOrCreateUserByClerkId(clerkId);
+  } catch (err) {
+    console.error("[POST /api/projects] user lookup/create failed:", err);
+    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
   }
 
   // Génération du slug unique

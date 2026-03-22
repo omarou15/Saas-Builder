@@ -23,9 +23,6 @@ export async function GET(): Promise<NextResponse> {
   }
 
   const user = await getUserByClerkId(clerkId);
-  if (!user) {
-    return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
-  }
 
-  return NextResponse.json({ credits: user.credits });
+  return NextResponse.json({ credits: user?.credits ?? 0 });
 }

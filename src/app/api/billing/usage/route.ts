@@ -36,7 +36,7 @@ export async function GET(req: Request): Promise<NextResponse> {
 
   const user = await getUserByClerkId(clerkId);
   if (!user) {
-    return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
+    return NextResponse.json({ transactions: [], total: 0, limit, offset });
   }
 
   const supabase = createServiceClient();

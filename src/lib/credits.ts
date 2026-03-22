@@ -38,6 +38,69 @@ export async function getUserByClerkId(
 }
 
 /**
+ * Crédits de bienvenue offerts à la première inscription (même valeur que le webhook Clerk).
+ */
+const WELCOME_CREDITS = 2.0;
+
+/**
+ * Retourne le user FYREN ou le crée automatiquement si le webhook Clerk
+ * n'a pas encore été traité (race condition ou webhook non configuré).
+ */
+export async function getOrCreateUserByClerkId(
+  clerkId: string
+): Promise<{ id: string; credits: number }> {
+  const existing = await getUserByClerkId(clerkId);
+  if (existing) return existing;
+
+  // Auto-création — le webhook Clerk n'a pas encore sync cet utilisateur
+  const supabase = createServiceClient();
+
+  // Récupérer l'email depuis Clerk pour rester cohérent avec le webhook
+  let email = `${clerkId}@pending.fyren.app`;
+  let name: string | null = null;
+  try {
+    const { clerkClient } = await import("@clerk/nextjs/server");
+    const client = await clerkClient();
+    const clerkUser = await client.users.getUser(clerkId);
+    email = clerkUser.emailAddresses[0]?.emailAddress ?? email;
+    name = [clerkUser.firstName, clerkUser.lastName].filter(Boolean).join(" ") || null;
+  } catch {
+    // Clerk SDK non dispo ou erreur — on continue avec le fallback
+    console.warn("[getOrCreateUser] Could not fetch Clerk user, using fallback email");
+  }
+
+  const { data: newUser, error: insertError } = await supabase
+    .from("users")
+    .insert({
+      clerk_id: clerkId,
+      email,
+      name,
+      credits: WELCOME_CREDITS,
+    })
+    .select("id, credits")
+    .single();
+
+  if (insertError) {
+    // Conflit possible si le webhook a créé le user entre-temps (race condition)
+    if (insertError.code === "23505") {
+      const retry = await getUserByClerkId(clerkId);
+      if (retry) return retry;
+    }
+    throw new Error(`Erreur création utilisateur : ${insertError.message}`);
+  }
+
+  // Enregistrer la transaction de bienvenue
+  await supabase.from("credit_transactions").insert({
+    user_id: newUser.id,
+    type: "welcome",
+    amount: WELCOME_CREDITS,
+    description: "Crédits de bienvenue FYREN",
+  });
+
+  return { id: newUser.id, credits: Number(newUser.credits) };
+}
+
+/**
  * Débite les crédits de manière atomique via RPC Postgres.
  * Lance une exception si le solde est insuffisant.
  *

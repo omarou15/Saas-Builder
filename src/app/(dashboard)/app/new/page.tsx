@@ -24,13 +24,12 @@ export default function NewProjectPage() {
         body: JSON.stringify({ name: name.trim() }),
       });
 
+      const data = (await res.json()) as { error?: string; project?: { id: string } };
       if (!res.ok) {
-        const data = (await res.json()) as { error?: string };
         throw new Error(data.error ?? "Failed to create project");
       }
 
-      const project = (await res.json()) as { id: string };
-      router.push(`/app/project/${project.id}`);
+      router.push(`/app/project/${data.project!.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Unknown error");
       setLoading(false);
