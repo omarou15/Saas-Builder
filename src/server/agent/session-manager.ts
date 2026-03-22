@@ -9,7 +9,7 @@
 
 import { Sandbox } from "e2b";
 import { EventEmitter } from "events";
-import { createServiceClient } from "@/lib/supabase";
+import { createServiceClient, createRealtimeClient } from "@/lib/supabase";
 import type { ModelMessage } from "ai";
 import type { AgentMode, AgentSessionStatus, AgentEvent } from "@/types";
 
@@ -210,13 +210,13 @@ export async function closeSession(sessionId: string): Promise<void> {
 import type { RealtimeChannel } from "@supabase/supabase-js";
 
 /** Per-session broadcast channel (lives for the duration of runAgentStep) */
-const activeChannels = new Map<string, { channel: RealtimeChannel; supabase: ReturnType<typeof createServiceClient> }>();
+const activeChannels = new Map<string, { channel: RealtimeChannel; supabase: ReturnType<typeof createRealtimeClient> }>();
 
 /** Open a Realtime broadcast channel for a session. Call ONCE at start of agent step. */
 export async function openBroadcastChannel(sessionId: string): Promise<void> {
   if (activeChannels.has(sessionId)) return; // already open
 
-  const supabase = createServiceClient();
+  const supabase = createRealtimeClient();
   const channel = supabase.channel(`session:${sessionId}`);
 
   // Subscribe and wait for confirmation

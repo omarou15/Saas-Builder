@@ -11,7 +11,7 @@
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getSessionMeta } from "@/server/agent/session-manager";
-import { createServiceClient } from "@/lib/supabase";
+import { createRealtimeClient } from "@/lib/supabase";
 import { getUserByClerkId } from "@/lib/credits";
 import type { AgentEvent } from "@/types";
 
@@ -59,7 +59,7 @@ export async function GET(
       };
 
       // Subscribe to Supabase Realtime channel for cross-Lambda events
-      const supabase = createServiceClient();
+      const supabase = createRealtimeClient();
       const channel = supabase.channel(`session:${sessionId}`);
 
       channel.on("broadcast", { event: "agent_event" }, (message) => {

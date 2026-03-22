@@ -37,6 +37,20 @@ export function createAuthenticatedClient(clerkToken: string) {
   });
 }
 
+// Client pour Supabase Realtime (broadcast/subscribe).
+// DOIT utiliser la clé anon — le service role key ne fonctionne pas avec Realtime.
+// Pas de persistence de session, pas de refresh de token.
+export function createRealtimeClient() {
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  if (!anonKey) throw new Error("Missing NEXT_PUBLIC_SUPABASE_ANON_KEY");
+  return createClient<Database>(getSupabaseUrl(), anonKey, {
+    auth: {
+      autoRefreshToken: false,
+      persistSession: false,
+    },
+  });
+}
+
 // Client service role côté serveur — bypass RLS.
 // UNIQUEMENT dans les Server Actions et API routes (webhook Clerk, billing, débit crédits).
 // JAMAIS exposé côté browser.
