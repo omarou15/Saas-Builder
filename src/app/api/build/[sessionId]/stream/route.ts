@@ -106,8 +106,6 @@ export async function GET(
         }
       }, 25_000);
 
-      // Clean up ping interval when stream closes
-      const originalClose = controller.close.bind(controller);
       // Note: we rely on cancel being called when the client disconnects
     },
 

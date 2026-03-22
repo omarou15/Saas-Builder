@@ -14,9 +14,10 @@ Dernière mise à jour : 22 mars 2026
 - [x] Session 6 — WebContainers preview + sync fichiers ✅
 - [x] Session 7 — Deploy pipeline — push GitHub (Octokit) + Vercel setup + schema Supabase ✅
 - [x] Session 8 — Frontend — landing (immersive/animée) + auth Clerk dark + dashboard + new project ✅
+- [x] Session 9 — Frontend — workspace (chat panel + preview panel + file tree + deploy) ✅
 
 ## En cours
-- [ ] Session 9 : Frontend — workspace (chat panel + preview panel + file tree)
+- [ ] Session 10 : Tests E2E (3 flows Playwright) + deploy Vercel prod
 
 ## À faire (ordre du build Phase 6)
 - [x] Session 1 : Setup projet Next.js + config TS/Tailwind/shadcn ✅
@@ -27,7 +28,7 @@ Dernière mise à jour : 22 mars 2026
 - [x] Session 6 : Preview — WebContainers + sync fichiers via SSE ✅
 - [x] Session 7 : Deploy pipeline — push GitHub (Octokit) + deploy Vercel + schema Supabase ✅
 - [x] Session 8 : Frontend — landing (immersive/animée) + auth dark + dashboard + new project ✅
-- [ ] Session 9 : Frontend — workspace (chat panel + preview panel + file tree)
+- [x] Session 9 : Frontend — workspace (chat panel + preview panel + file tree + deploy) ✅
 - [ ] Session 10 : Tests E2E (3 flows Playwright) + deploy Vercel prod
 
 ## Détail Session 1 (complété le 21 mars 2026)
@@ -585,3 +586,91 @@ src/components/landing/
 - kebab-case fichiers, PascalCase composants
 - Imports absolus @/
 - Pas de barrel files
+
+## Détail Session 9 (complété le 22 mars 2026)
+
+### Packages installés
+- `react-resizable-panels` (v4.7.4) — Split panels resizable (API v4 : Group, Panel, Separator)
+
+### Fichiers créés
+```
+src/components/workspace/
+  workspace-header.tsx   → Header avec nom projet, status badge, crédits, bouton Deploy
+  chat-panel.tsx         → Chat avec historique, input, SSE streaming, tool activities, stage progress
+  deploy-dialog.tsx      → Modal de deploy avec stages en temps réel (SSE /api/deploy)
+  workspace-layout.tsx   → Layout principal split panel + responsive mobile tabs
+
+src/app/(dashboard)/app/project/[id]/
+  page.tsx               → Server Component : fetch projet + ownership + WorkspaceLayout
+  layout.tsx             → Override layout : full-screen sans padding dashboard
+```
+
+### Architecture workspace
+
+**Desktop** (≥ 1024px) :
+```
+┌──────────────────────────────────────────────┐
+│ Header : ← Projects | Nom projet | Status | Credits | Deploy │
+├──────────────┬───────────────────────────────┤
+│              │                               │
+│  Chat Panel  │       Preview Panel           │
+│  (40%)       │       (60%)                   │
+│              │ ← resize handle →             │
+│              │                               │
+├──────────────┴───────────────────────────────┤
+│ ▼ Files | Logs   (collapsible bottom panel)  │
+└──────────────────────────────────────────────┘
+```
+
+**Mobile** (<1024px) :
+- Tab bar : Chat | Preview
+- Un seul panneau visible à la fois
+- Header simplifié
+
+### Chat Panel
+- Charge l'historique via GET /api/projects/[id]/conversations
+- Envoie des messages via POST /api/build/[sessionId]/message
+- Écoute SSE stream GET /api/build/[sessionId]/stream
+- Types d'events gérés :
+  - `assistant_message` → streaming token par token (append au message en cours)
+  - `tool_use` → icône + description (activité agent)
+  - `stage_change` → barre de progression avec label
+  - `build_status` → update pourcentage
+  - `step_done` → finalise le message streaming
+  - `error` → bannière rouge
+  - `done` → callback onAgentDone
+- Input : Textarea avec Shift+Enter pour newline, Enter pour envoyer
+- Indicateur "agent réfléchit…" pendant streaming
+
+### Deploy Dialog
+- Déclenché par bouton Deploy dans le header
+- POST /api/deploy → lit le ReadableStream SSE
+- 4 stages : GitHub push → Vercel setup → Supabase schema → Finalization
+- Icônes de progression par stage (pending/running/success/error)
+- Après deploy : liens cliquables GitHub repo + Live app
+
+### Workspace Layout
+- Split panels via react-resizable-panels v4 (Group/Panel/Separator)
+- Resize handle custom avec glow orange au hover
+- Bottom panel collapsible : File tree + Logs (tabs)
+- Session lifecycle :
+  - Si projet `draft` → auto-start session intake
+  - Si pas de session → overlay "Démarrer le build"
+  - Loading → overlay spinner
+- Fetch crédits sur mount (/api/billing/credits)
+- Refresh status projet après agent done
+
+### Corrections lint pré-existantes
+- `PRESET_AMOUNTS_USD` → `_PRESET_AMOUNTS_USD` (billing/purchase)
+- `originalClose` supprimé (build/stream)
+- `useEffect` import inutile retiré (file-tree)
+- `errorMessage` import inutile retiré (deploy/supabase)
+
+### Conventions respectées
+- TypeScript strict — 0 errors
+- Server Components : page.tsx (fetch + ownership server-side)
+- 'use client' : workspace-header, chat-panel, deploy-dialog, workspace-layout
+- kebab-case fichiers, PascalCase composants
+- Imports absolus @/
+- Pas de barrel files
+- Dark mode cohérent (orange #f97316, Space Grotesk, JetBrains Mono)

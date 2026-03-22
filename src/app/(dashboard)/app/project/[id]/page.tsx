@@ -1,28 +1,48 @@
 import { auth } from "@clerk/nextjs/server";
-import { redirect } from "next/navigation";
+import { redirect, notFound } from "next/navigation";
+import { createServiceClient } from "@/lib/supabase";
+import { getUserByClerkId } from "@/lib/credits";
+import { WorkspaceLayout } from "@/components/workspace/workspace-layout";
+import type { Project } from "@/types";
 
 export default async function ProjectPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { userId } = await auth();
-  if (!userId) redirect("/sign-in");
+  const { userId: clerkId } = await auth();
+  if (!clerkId) redirect("/sign-in");
 
   const { id } = await params;
 
-  return (
-    <div className="flex flex-col items-center justify-center py-20 text-center">
-      <div className="mb-4 inline-flex rounded-2xl bg-orange-500/10 p-4">
-        <span className="text-2xl">🚧</span>
-      </div>
-      <h1 className="text-xl font-bold">Workspace</h1>
-      <p className="mt-2 text-sm text-muted-foreground">
-        Le workspace (chat + preview) arrive en Session 9.
-      </p>
-      <p className="mt-1 text-xs text-muted-foreground/60">
-        Project ID: {id}
-      </p>
-    </div>
-  );
+  // Lookup FYREN user
+  const user = await getUserByClerkId(clerkId);
+  if (!user) redirect("/sign-in");
+
+  // Fetch project with ownership check
+  const supabase = createServiceClient();
+  const { data: project } = await supabase
+    .from("projects")
+    .select("*")
+    .eq("id", id)
+    .eq("user_id", user.id)
+    .single();
+
+  if (!project) notFound();
+
+  // Cast to typed Project
+  const typedProject: Project = {
+    id: project.id as string,
+    user_id: project.user_id as string,
+    name: project.name as string,
+    slug: project.slug as string,
+    status: project.status as Project["status"],
+    cdc_json: project.cdc_json as Project["cdc_json"],
+    stack_config: project.stack_config as Project["stack_config"],
+    sandbox_id: project.sandbox_id as Project["sandbox_id"],
+    created_at: project.created_at as string,
+    updated_at: project.updated_at as string,
+  };
+
+  return <WorkspaceLayout project={typedProject} />;
 }

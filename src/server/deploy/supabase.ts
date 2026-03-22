@@ -17,7 +17,7 @@
 // (POST https://api.supabase.com/v1/projects/{ref}/database/query).
 
 import { decrypt } from "@/lib/crypto";
-import { sanitizeForLog, errorMessage } from "@/server/deploy/utils";
+import { sanitizeForLog } from "@/server/deploy/utils";
 
 // ============================================================
 // Types

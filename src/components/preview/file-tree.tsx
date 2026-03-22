@@ -8,7 +8,7 @@
 // The tree is rebuilt from a flat list of file paths (e.g. "src/App.tsx"),
 // not from the WebContainer filesystem directly — avoids expensive polling.
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useMemo, useState } from "react";
 import { ChevronRight, File, Folder, FolderOpen } from "lucide-react";
 import { cn } from "@/lib/utils";
 

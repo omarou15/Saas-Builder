@@ -11,7 +11,7 @@ import { createServiceClient } from "@/lib/supabase";
 import { getUserByClerkId } from "@/lib/credits";
 import { rateLimit } from "@/lib/rate-limit";
 
-const PRESET_AMOUNTS_USD = [5, 20, 50] as const;
+const _PRESET_AMOUNTS_USD = [5, 20, 50] as const;
 const MIN_AMOUNT_USD = 5;
 
 const BodySchema = z.object({
