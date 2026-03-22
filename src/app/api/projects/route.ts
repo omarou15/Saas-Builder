@@ -105,8 +105,9 @@ export async function POST(req: Request): Promise<NextResponse> {
   try {
     user = await getOrCreateUserByClerkId(clerkId);
   } catch (err) {
-    console.error("[POST /api/projects] user lookup/create failed:", err);
-    return NextResponse.json({ error: "Erreur serveur" }, { status: 500 });
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error("[POST /api/projects] user lookup/create failed:", msg);
+    return NextResponse.json({ error: `Erreur utilisateur : ${msg}` }, { status: 500 });
   }
 
   // Génération du slug unique
