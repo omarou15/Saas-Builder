@@ -19,8 +19,8 @@ import { generateText, stepCountIs } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { ModelMessage } from "ai";
 import { createAgentTools, INTAKE_TOOLS, BUILD_TOOLS, ITERATE_TOOLS } from "./tools";
-import { emitEvent, emitError } from "./session-store";
-import type { AgentSession } from "./session-store";
+import { emitEvent, emitError, saveSessionState } from "./session-manager";
+import type { ReconnectedSession } from "./session-manager";
 import { INTAKE_PROMPT, BUILD_PROMPT, ITERATE_PROMPT } from "./prompts";
 import { deductCredits, toCreditCost, estimateCost } from "@/lib/credits";
 import { createServiceClient } from "@/lib/supabase";
@@ -71,7 +71,7 @@ const MODE_MAX_TURNS: Record<AgentMode, number> = {
  * and emits all events to session.emitter.
  */
 export async function runAgentStep(
-  session: AgentSession,
+  session: ReconnectedSession,
   userMessage: string,
   attachments?: MessageAttachment[]
 ): Promise<void> {
@@ -233,6 +233,11 @@ export async function runAgentStep(
       message
     );
     emitError(session, message);
+  } finally {
+    // Persist state to Supabase (even on error)
+    await saveSessionState(session.sessionId, session.conversationHistory, session.status).catch((err) => {
+      console.error("[agent-runner] Failed to save session state:", err instanceof Error ? err.message : err);
+    });
   }
 }
 
@@ -245,7 +250,7 @@ export async function runAgentStep(
  * Translates BuildStage → AgentMode and injects stage-specific context.
  */
 export async function runBuildStage(
-  session: AgentSession,
+  session: ReconnectedSession,
   stage: string,
   stageContext: string
 ): Promise<void> {

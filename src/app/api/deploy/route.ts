@@ -24,7 +24,7 @@ import { z } from "zod";
 import { rateLimit } from "@/lib/rate-limit";
 import { getUserByClerkId } from "@/lib/credits";
 import { createServiceClient } from "@/lib/supabase";
-import { getSession } from "@/server/agent/session-store";
+import { Sandbox } from "e2b";
 import { connectSandbox } from "@/server/agent/sandbox-manager";
 import { runDeployPipeline, type DeployStage } from "@/server/deploy/index";
 import { sanitizeForLog } from "@/server/deploy/utils";
@@ -119,7 +119,12 @@ export async function POST(req: Request): Promise<Response> {
   (async () => {
     try {
       // Connect to the existing sandbox
-      let sandbox = getSession(project.sandbox_id!)?.sandbox ?? null;
+      let sandbox: Sandbox | null = null;
+      try {
+        sandbox = await Sandbox.connect(project.sandbox_id!);
+      } catch {
+        sandbox = null;
+      }
 
       if (!sandbox) {
         sendEvent({ type: "progress", stage: "init", message: "Reconnexion au sandbox E2B..." });

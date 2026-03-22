@@ -5,11 +5,9 @@ import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getUserByClerkId } from "@/lib/credits";
 import {
-  getSession,
-  sessionBelongsTo,
-  deleteSession,
-} from "@/server/agent/session-store";
-import { destroySandbox } from "@/server/agent/sandbox-manager";
+  getSessionMeta,
+  closeSession,
+} from "@/server/agent/session-manager";
 import { createServiceClient } from "@/lib/supabase";
 
 // ============================================================
@@ -32,23 +30,17 @@ export async function GET(
     return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
   }
 
-  if (!sessionBelongsTo(sessionId, user.id)) {
+  const meta = await getSessionMeta(sessionId, user.id);
+  if (!meta) {
     return NextResponse.json({ error: "Session introuvable" }, { status: 404 });
   }
 
-  const session = getSession(sessionId);
-  if (!session) {
-    return NextResponse.json({ error: "Session expirée" }, { status: 410 });
-  }
-
   return NextResponse.json({
-    sessionId: session.sessionId,
-    projectId: session.projectId,
-    sandboxId: session.sandboxId,
-    mode: session.mode,
-    status: session.status,
-    createdAt: session.createdAt.toISOString(),
-    historyLength: session.conversationHistory.length,
+    sessionId,
+    projectId: meta.projectId,
+    sandboxId: meta.sandboxId,
+    mode: meta.mode,
+    status: meta.status,
   });
 }
 
@@ -72,28 +64,20 @@ export async function DELETE(
     return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
   }
 
-  if (!sessionBelongsTo(sessionId, user.id)) {
-    return NextResponse.json({ error: "Session introuvable" }, { status: 404 });
+  const meta = await getSessionMeta(sessionId, user.id);
+  if (!meta) {
+    return NextResponse.json({ ok: true }); // Already gone — idempotent
   }
 
-  const session = getSession(sessionId);
-  if (!session) {
-    // Already gone — idempotent
-    return NextResponse.json({ ok: true });
-  }
+  // Close session (kills sandbox + marks as closed in DB)
+  await closeSession(sessionId);
 
-  // Kill E2B sandbox
-  await destroySandbox(session.sandbox);
-
-  // Clean up project in DB (clear sandbox_id; leave status as-is)
+  // Clean up project in DB (clear sandbox_id)
   const supabase = createServiceClient();
   await supabase
     .from("projects")
     .update({ sandbox_id: null })
-    .eq("id", session.projectId);
-
-  // Remove session from store (also stops heartbeat)
-  deleteSession(sessionId);
+    .eq("id", meta.projectId);
 
   return NextResponse.json({ ok: true });
 }

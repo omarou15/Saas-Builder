@@ -11,11 +11,8 @@ import { randomUUID } from "crypto";
 import { rateLimit } from "@/lib/rate-limit";
 import { getUserByClerkId, getUserCredits } from "@/lib/credits";
 import { createServiceClient } from "@/lib/supabase";
-import { createSandbox, keepSandboxAlive } from "@/server/agent/sandbox-manager";
-import {
-  createSession,
-  startHeartbeat,
-} from "@/server/agent/session-store";
+import { createSandbox } from "@/server/agent/sandbox-manager";
+import { createAgentSession } from "@/server/agent/session-manager";
 import type { AgentMode } from "@/types";
 
 const StartBuildSchema = z.object({
@@ -132,12 +129,9 @@ export async function POST(req: Request): Promise<Response> {
     })
     .eq("id", projectId);
 
-  // Create in-memory session
+  // Create session in Supabase (serverless-compatible)
   const sessionId = randomUUID();
-  const session = createSession(sessionId, projectId, user.id, sandbox, sandboxId, mode as AgentMode);
-
-  // Start E2B heartbeat (every 5 minutes)
-  startHeartbeat(session, keepSandboxAlive);
+  await createAgentSession(sessionId, projectId, user.id, sandboxId, mode as AgentMode);
 
   return NextResponse.json({ sessionId, sandboxId, conversationId: conversation?.id ?? null });
 }

@@ -7,7 +7,7 @@
 
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
-import { getSession, sessionBelongsTo } from "@/server/agent/session-store";
+import { reconnectSession } from "@/server/agent/session-manager";
 import { getUserByClerkId } from "@/lib/credits";
 import type { AgentEvent } from "@/types";
 
@@ -32,14 +32,10 @@ export async function GET(
     return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
   }
 
-  // Verify session ownership
-  if (!sessionBelongsTo(sessionId, user.id)) {
-    return NextResponse.json({ error: "Session introuvable" }, { status: 404 });
-  }
-
-  const session = getSession(sessionId);
+  // Reconnect session from Supabase + E2B sandbox
+  const session = await reconnectSession(sessionId, user.id);
   if (!session) {
-    return NextResponse.json({ error: "Session expirée" }, { status: 410 });
+    return NextResponse.json({ error: "Session introuvable ou expirée" }, { status: 404 });
   }
 
   // ——————————————————————————————————————————————

@@ -238,6 +238,60 @@ export interface Database {
           },
         ];
       };
+      agent_sessions: {
+        Row: {
+          id: string;
+          session_id: string;
+          project_id: string;
+          user_id: string;
+          sandbox_id: string;
+          mode: "intake" | "build" | "iterate";
+          status: "idle" | "running" | "error" | "closed";
+          conversation_history: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: {
+          id?: string;
+          session_id: string;
+          project_id: string;
+          user_id: string;
+          sandbox_id: string;
+          mode: "intake" | "build" | "iterate";
+          status?: "idle" | "running" | "error" | "closed";
+          conversation_history?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: {
+          id?: string;
+          session_id?: string;
+          project_id?: string;
+          user_id?: string;
+          sandbox_id?: string;
+          mode?: "intake" | "build" | "iterate";
+          status?: "idle" | "running" | "error" | "closed";
+          conversation_history?: Json;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Relationships: [
+          {
+            foreignKeyName: "agent_sessions_project_id_fkey";
+            columns: ["project_id"];
+            isOneToOne: false;
+            referencedRelation: "projects";
+            referencedColumns: ["id"];
+          },
+          {
+            foreignKeyName: "agent_sessions_user_id_fkey";
+            columns: ["user_id"];
+            isOneToOne: false;
+            referencedRelation: "users";
+            referencedColumns: ["id"];
+          },
+        ];
+      };
     };
     Views: {
       user_credit_balance: {

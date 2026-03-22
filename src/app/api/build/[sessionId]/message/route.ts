@@ -11,7 +11,7 @@ import { NextResponse } from "next/server";
 import { z } from "zod";
 import { rateLimit } from "@/lib/rate-limit";
 import { getUserByClerkId, getUserCredits } from "@/lib/credits";
-import { getSession, sessionBelongsTo } from "@/server/agent/session-store";
+import { reconnectSession, saveSessionState } from "@/server/agent/session-manager";
 import { runAgentStep } from "@/server/agent/agent-runner";
 import { createServiceClient } from "@/lib/supabase";
 
@@ -77,14 +77,10 @@ export async function POST(
     return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
   }
 
-  // Verify session ownership
-  if (!sessionBelongsTo(sessionId, user.id)) {
-    return NextResponse.json({ error: "Session introuvable" }, { status: 404 });
-  }
-
-  const session = getSession(sessionId);
+  // Reconnect session from Supabase + E2B sandbox
+  const session = await reconnectSession(sessionId, user.id);
   if (!session) {
-    return NextResponse.json({ error: "Session expirée" }, { status: 410 });
+    return NextResponse.json({ error: "Session introuvable ou expirée" }, { status: 404 });
   }
 
   // Check agent is not already running
@@ -133,14 +129,19 @@ export async function POST(
     mimeType: a.mimeType,
   }));
 
-  // Run agent step asynchronously — do NOT await (fire-and-forget)
-  // Events will flow through the SSE stream
-  runAgentStep(session, message, parsedAttachments).catch((err) => {
-    console.error(
-      "[build/message] Unhandled agent error:",
-      err instanceof Error ? err.message : err
-    );
-  });
+  // Run agent step asynchronously — fire-and-forget with state persistence
+  // Events flow through the SSE stream; state is saved to Supabase after completion
+  runAgentStep(session, message, parsedAttachments)
+    .then(async () => {
+      await saveSessionState(sessionId, session.conversationHistory, session.status);
+    })
+    .catch(async (err) => {
+      console.error(
+        "[build/message] Unhandled agent error:",
+        err instanceof Error ? err.message : err
+      );
+      await saveSessionState(sessionId, session.conversationHistory, "error").catch(() => {});
+    });
 
   return NextResponse.json({ ok: true, status: "running" });
 }
