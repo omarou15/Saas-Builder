@@ -105,7 +105,7 @@ export async function POST(req: Request): Promise<Response> {
     );
   }
 
-  const { sandbox, sandboxId } = sandboxInfo;
+  const { sandboxId } = sandboxInfo;
 
   // Create a new conversation for this session
   const convType = mode === "intake" ? "intake" : mode === "iterate" ? "iterate" : "build";
