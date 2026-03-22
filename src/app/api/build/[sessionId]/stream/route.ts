@@ -1,22 +1,21 @@
 // GET /api/build/[sessionId]/stream — SSE stream of agent events
-// The frontend subscribes here to receive real-time agent events:
-//   assistant_message, tool_use, tool_result, file_change, build_status,
-//   stage_change, step_done, error
+// The frontend subscribes here to receive real-time agent events.
 //
-// Architecture (serverless-compatible):
-//   Agent Lambda emits events → Supabase Realtime broadcast
-//   SSE Lambda subscribes to Supabase Realtime → forwards to frontend via SSE
-//   Also listens to local EventEmitter (for same-Lambda / dev mode)
+// Architecture (serverless-compatible, no WebSockets):
+//   Agent Lambda writes events → Supabase table agent_events (INSERT)
+//   SSE Lambda polls agent_events every 500ms → forwards to frontend via SSE
+//   No Realtime, no WebSockets — works on Vercel serverless.
 
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { getSessionMeta } from "@/server/agent/session-manager";
-import { createRealtimeClient } from "@/lib/supabase";
+import { createServiceClient } from "@/lib/supabase";
 import { getUserByClerkId } from "@/lib/credits";
-import type { AgentEvent } from "@/types";
 
-export const runtime = "nodejs"; // SSE requires Node.js (not Edge)
+export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+// Allow long-running SSE (up to 5 min on Vercel Pro, 60s on free)
+export const maxDuration = 300;
 
 export async function GET(
   _req: Request,
@@ -36,78 +35,88 @@ export async function GET(
     return NextResponse.json({ error: "Utilisateur introuvable" }, { status: 404 });
   }
 
-  // Verify session exists and belongs to user (lightweight — no sandbox reconnect)
+  // Verify session exists and belongs to user
   const meta = await getSessionMeta(sessionId, user.id);
   if (!meta) {
     return NextResponse.json({ error: "Session introuvable ou expirée" }, { status: 404 });
   }
 
   // ——————————————————————————————————————————————
-  // Build SSE ReadableStream backed by Supabase Realtime
+  // Build SSE ReadableStream backed by polling agent_events table
   // ——————————————————————————————————————————————
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     start(controller) {
-      const send = (event: AgentEvent) => {
+      let lastId = 0;
+      let closed = false;
+
+      const supabase = createServiceClient();
+
+      // Poll for new events every 500ms
+      const pollInterval = setInterval(async () => {
+        if (closed) return;
+
         try {
-          const data = `data: ${JSON.stringify(event)}\n\n`;
-          controller.enqueue(encoder.encode(data));
+          const { data } = await supabase
+            .from("agent_events")
+            .select("id, event")
+            .eq("session_id", sessionId)
+            .gt("id", lastId)
+            .order("id", { ascending: true });
+
+          for (const row of data ?? []) {
+            const event = row.event as Record<string, unknown>;
+            try {
+              controller.enqueue(
+                encoder.encode(`data: ${JSON.stringify(event)}\n\n`)
+              );
+            } catch {
+              // Controller closed — client disconnected
+              closed = true;
+              clearInterval(pollInterval);
+              clearInterval(pingInterval);
+              return;
+            }
+            lastId = row.id as number;
+
+            // Close stream on terminal events
+            const eventType = (event as { type?: string }).type;
+            if (eventType === "done" || eventType === "error" || eventType === "step_done") {
+              // Keep polling a bit more in case there are trailing events
+            }
+          }
         } catch {
-          // Controller may have been closed if client disconnected
+          // Supabase query failed — non-fatal, retry next poll
         }
-      };
+      }, 500);
 
-      // Subscribe to Supabase Realtime channel for cross-Lambda events
-      const supabase = createRealtimeClient();
-      const channel = supabase.channel(`session:${sessionId}`);
-
-      channel.on("broadcast", { event: "agent_event" }, (message) => {
-        console.log(`[STREAM] Received event from Realtime for session:${sessionId}`);
-        const event = message.payload as AgentEvent;
-        send(event);
-
-        // Close stream on terminal events
-        if ((event.type as string) === "done" || event.type === "error") {
-          try {
-            controller.close();
-          } catch {
-            // Already closed
-          }
-          void supabase.removeChannel(channel);
-          clearInterval(pingInterval);
-        }
-      });
-
-      channel.subscribe((status) => {
-        console.log(`[STREAM] Channel subscribe status:`, status);
-        if (status === "SUBSCRIBED") {
-          // Send initial connection event
-          try {
-            controller.enqueue(
-              encoder.encode(
-                `data: ${JSON.stringify({ type: "connected", payload: { sessionId }, timestamp: new Date().toISOString() })}\n\n`
-              )
-            );
-          } catch {
-            // Ignore
-          }
-        }
-      });
-
-      // Send a connection heartbeat every 25 seconds to keep the connection alive
+      // Keep-alive ping every 25s
       const pingInterval = setInterval(() => {
+        if (closed) return;
         try {
           controller.enqueue(encoder.encode(": ping\n\n"));
         } catch {
+          closed = true;
+          clearInterval(pollInterval);
           clearInterval(pingInterval);
-          void supabase.removeChannel(channel);
         }
       }, 25_000);
+
+      // Send initial connected event
+      try {
+        controller.enqueue(
+          encoder.encode(
+            `data: ${JSON.stringify({ type: "connected", payload: { sessionId }, timestamp: new Date().toISOString() })}\n\n`
+          )
+        );
+      } catch {
+        // Ignore
+      }
     },
 
     cancel() {
-      // Client disconnected — Supabase channel cleanup happens via removeChannel above
+      // Client disconnected — intervals will be cleaned up on next tick
     },
   });
 
@@ -117,7 +126,7 @@ export async function GET(
       "Content-Type": "text/event-stream",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
-      "X-Accel-Buffering": "no", // Disable Nginx buffering
+      "X-Accel-Buffering": "no",
     },
   });
 }

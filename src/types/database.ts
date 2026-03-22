@@ -292,6 +292,27 @@ export interface Database {
           },
         ];
       };
+      agent_events: {
+        Row: {
+          id: number;
+          session_id: string;
+          event: Json;
+          created_at: string;
+        };
+        Insert: {
+          id?: number;
+          session_id: string;
+          event: Json;
+          created_at?: string;
+        };
+        Update: {
+          id?: number;
+          session_id?: string;
+          event?: Json;
+          created_at?: string;
+        };
+        Relationships: [];
+      };
     };
     Views: {
       user_credit_balance: {

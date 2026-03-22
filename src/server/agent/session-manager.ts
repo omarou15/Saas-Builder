@@ -9,7 +9,7 @@
 
 import { Sandbox } from "e2b";
 import { EventEmitter } from "events";
-import { createServiceClient, createRealtimeClient } from "@/lib/supabase";
+import { createServiceClient } from "@/lib/supabase";
 import type { ModelMessage } from "ai";
 import type { AgentMode, AgentSessionStatus, AgentEvent } from "@/types";
 
@@ -202,83 +202,28 @@ export async function closeSession(sessionId: string): Promise<void> {
 }
 
 // ============================================================
-// Realtime broadcast channel — ONE channel per agent execution
-// Created once via openBroadcastChannel(), reused for all events,
-// cleaned up via closeBroadcastChannel() at the end of the step.
+// Event helpers — INSERT into agent_events table (polling-based)
+// The SSE stream route polls this table every 500ms.
+// No WebSockets, no Realtime — works on Vercel serverless.
 // ============================================================
 
-import type { RealtimeChannel } from "@supabase/supabase-js";
-
-/** Per-session broadcast channel (lives for the duration of runAgentStep) */
-const activeChannels = new Map<string, { channel: RealtimeChannel; supabase: ReturnType<typeof createRealtimeClient> }>();
-
-/** Open a Realtime broadcast channel for a session. Call ONCE at start of agent step. */
-export async function openBroadcastChannel(sessionId: string): Promise<void> {
-  if (activeChannels.has(sessionId)) return; // already open
-
-  const supabase = createRealtimeClient();
-  const channel = supabase.channel(`session:${sessionId}`);
-
-  // Subscribe and wait for confirmation
-  await new Promise<void>((resolve, reject) => {
-    channel.subscribe((status) => {
-      console.log(`[BROADCAST] Emitter channel subscribe status for session:${sessionId}:`, status);
-      if (status === "SUBSCRIBED") resolve();
-      else if (status === "CHANNEL_ERROR") reject(new Error("Realtime channel error"));
-    });
-    // Timeout after 5s
-    setTimeout(() => resolve(), 5000);
-  });
-
-  activeChannels.set(sessionId, { channel, supabase });
-}
-
-/** Close the broadcast channel. Call at end of agent step. */
-export async function closeBroadcastChannel(sessionId: string): Promise<void> {
-  const entry = activeChannels.get(sessionId);
-  if (entry) {
-    await entry.supabase.removeChannel(entry.channel);
-    activeChannels.delete(sessionId);
-  }
-}
-
-// ============================================================
-// Event helpers — dual emission: local EventEmitter + Supabase Realtime
-// ============================================================
-
-function broadcastEvent(sessionId: string, event: AgentEvent): void {
-  const entry = activeChannels.get(sessionId);
-  if (!entry) {
-    console.warn("[session-manager] No active broadcast channel for session", sessionId);
-    return;
-  }
-  void entry.channel.send({
-    type: "broadcast",
-    event: "agent_event",
-    payload: event,
-  }).catch((err: unknown) => {
-    console.warn("[session-manager] Broadcast send failed:", err instanceof Error ? err.message : err);
-  });
-}
-
-export function emitEvent(session: ReconnectedSession, event: AgentEvent): void {
-  console.log(`[BROADCAST] Sending event type=${event.type} to channel session:${session.sessionId}`);
+export async function emitEvent(session: ReconnectedSession, event: AgentEvent): Promise<void> {
   // Local emitter (same Lambda / dev)
   session.emitter.emit("agent_event", event);
-  // Cross-Lambda broadcast (production)
-  broadcastEvent(session.sessionId, event);
+  // Persist to agent_events table (cross-Lambda, production)
+  await writeEvent(session.sessionId, event);
 }
 
-export function emitDone(session: ReconnectedSession): void {
+export async function emitDone(session: ReconnectedSession): Promise<void> {
   session.emitter.emit("agent_done");
-  broadcastEvent(session.sessionId, {
+  await writeEvent(session.sessionId, {
     type: "done" as AgentEvent["type"],
     payload: null,
     timestamp: new Date().toISOString(),
   });
 }
 
-export function emitError(session: ReconnectedSession, message: string): void {
+export async function emitError(session: ReconnectedSession, message: string): Promise<void> {
   const event: AgentEvent = {
     type: "error",
     payload: { message },
@@ -286,5 +231,27 @@ export function emitError(session: ReconnectedSession, message: string): void {
   };
   session.emitter.emit("agent_event", event);
   session.emitter.emit("agent_error");
-  broadcastEvent(session.sessionId, event);
+  await writeEvent(session.sessionId, event);
+}
+
+async function writeEvent(sessionId: string, event: AgentEvent): Promise<void> {
+  try {
+    const supabase = createServiceClient();
+    await supabase.from("agent_events").insert({
+      session_id: sessionId,
+      event: JSON.parse(JSON.stringify(event)),
+    });
+  } catch (err) {
+    console.warn("[session-manager] Failed to write event:", err instanceof Error ? err.message : err);
+  }
+}
+
+/** Delete all events for a session (cleanup after completion) */
+export async function cleanupSessionEvents(sessionId: string): Promise<void> {
+  try {
+    const supabase = createServiceClient();
+    await supabase.from("agent_events").delete().eq("session_id", sessionId);
+  } catch {
+    // Non-fatal
+  }
 }

@@ -19,7 +19,7 @@ import { generateText, stepCountIs } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { ModelMessage } from "ai";
 import { createAgentTools, INTAKE_TOOLS, BUILD_TOOLS, ITERATE_TOOLS } from "./tools";
-import { emitEvent, emitError, saveSessionState, openBroadcastChannel, closeBroadcastChannel } from "./session-manager";
+import { emitEvent, emitError, saveSessionState, cleanupSessionEvents } from "./session-manager";
 import type { ReconnectedSession } from "./session-manager";
 import { INTAKE_PROMPT, BUILD_PROMPT, ITERATE_PROMPT } from "./prompts";
 import { deductCredits, toCreditCost, estimateCost } from "@/lib/credits";
@@ -82,16 +82,13 @@ export async function runAgentStep(
 
   session.status = "running";
 
-  // Open Supabase Realtime broadcast channel (one per agent step execution)
-  await openBroadcastChannel(session.sessionId);
-
   // Emit user message back to frontend (for display in chat)
   const userEvent: AgentEvent = {
     type: "assistant_message",
     payload: { role: "user", content: userMessage },
     timestamp: new Date().toISOString(),
   };
-  emitEvent(session, userEvent);
+  await emitEvent(session, userEvent);
 
   // Build user message — multimodal if attachments include images
   const userMsg = buildUserMessage(userMessage, attachments);
@@ -103,7 +100,7 @@ export async function runAgentStep(
   // Build tools restricted to mode
   const allTools = createAgentTools(session.sandbox, (payload: FileChangePayload) => {
     fileChanges.push(payload);
-    emitEvent(session, {
+    void emitEvent(session, {
       type: "file_change",
       payload,
       timestamp: new Date().toISOString(),
@@ -139,7 +136,7 @@ export async function runAgentStep(
 
         // Emit assistant text
         if (step.text?.trim()) {
-          emitEvent(session, {
+          await emitEvent(session, {
             type: "assistant_message",
             payload: { role: "assistant", content: step.text },
             timestamp: new Date().toISOString(),
@@ -149,7 +146,7 @@ export async function runAgentStep(
         // Emit tool_use events (ai v6: toolCall.input instead of args)
         for (const toolCall of step.toolCalls ?? []) {
           const sanitizedInput = sanitizeToolInput(toolCall.toolName, toolCall.input);
-          emitEvent(session, {
+          await emitEvent(session, {
             type: "tool_use",
             payload: {
               tool: toolCall.toolName,
@@ -162,7 +159,7 @@ export async function runAgentStep(
 
         // Emit tool_result events (ai v6: toolResult.output instead of result)
         for (const toolResult of step.toolResults ?? []) {
-          emitEvent(session, {
+          await emitEvent(session, {
             type: "tool_result",
             payload: {
               toolCallId: toolResult.toolCallId,
@@ -217,7 +214,7 @@ export async function runAgentStep(
     }
 
     // Emit step_done so frontend knows agent is idle again
-    emitEvent(session, {
+    await emitEvent(session, {
       type: "step_done",
       payload: {
         tokensUsed: totalInputTokens + totalOutputTokens,
@@ -241,8 +238,11 @@ export async function runAgentStep(
     await saveSessionState(session.sessionId, session.conversationHistory, session.status).catch((err) => {
       console.error("[agent-runner] Failed to save session state:", err instanceof Error ? err.message : err);
     });
-    // Close Realtime broadcast channel
-    await closeBroadcastChannel(session.sessionId);
+    // Clean up events from agent_events table (they've been consumed by the SSE stream)
+    // Delay cleanup slightly to give the polling stream time to read the final events
+    setTimeout(() => {
+      void cleanupSessionEvents(session.sessionId);
+    }, 5000);
   }
 }
 
@@ -273,7 +273,7 @@ export async function runBuildStage(
   session.mode = mode;
 
   // Emit stage change event to frontend
-  emitEvent(session, {
+  await emitEvent(session, {
     type: "stage_change",
     payload: { stage, message: `Starting stage: ${stage}` },
     timestamp: new Date().toISOString(),
