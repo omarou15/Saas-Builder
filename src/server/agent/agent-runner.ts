@@ -24,7 +24,7 @@ import type { ReconnectedSession } from "./session-manager";
 import { INTAKE_PROMPT, BUILD_PROMPT, ITERATE_PROMPT } from "./prompts";
 import { deductCredits, toCreditCost, estimateCost } from "@/lib/credits";
 import { createServiceClient } from "@/lib/supabase";
-import type { AgentEvent, AgentMode, FileChangePayload, MessageAttachment } from "@/types";
+import type { AgentMode, FileChangePayload, MessageAttachment } from "@/types";
 import { sanitizeForLog } from "@/lib/utils";
 
 // ============================================================
@@ -82,15 +82,8 @@ export async function runAgentStep(
 
   session.status = "running";
 
-  // Emit user message back to frontend (for display in chat)
-  const userEvent: AgentEvent = {
-    type: "assistant_message",
-    payload: { role: "user", content: userMessage },
-    timestamp: new Date().toISOString(),
-  };
-  await emitEvent(session, userEvent);
-
   // Build user message — multimodal if attachments include images
+  // Note: the user message is already displayed optimistically by the frontend (chat-panel.tsx)
   const userMsg = buildUserMessage(userMessage, attachments);
   session.conversationHistory.push(userMsg);
 
