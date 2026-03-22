@@ -16,9 +16,7 @@ Dernière mise à jour : 22 mars 2026
 - [x] Session 8 — Frontend — landing (immersive/animée) + auth Clerk dark + dashboard + new project ✅
 - [x] Session 9 — Frontend — workspace (chat panel + preview panel + file tree + deploy) ✅
 - [x] Session 9.5 — Web Search + Upload fichiers + Vision ✅
-
-## En cours
-- [ ] Session 10 : Tests E2E (3 flows Playwright) + deploy Vercel prod
+- [x] Session 10 — Tests E2E (Playwright) + Deploy Vercel prod + Nettoyage final ✅
 
 ## À faire (ordre du build Phase 6)
 - [x] Session 1 : Setup projet Next.js + config TS/Tailwind/shadcn ✅
@@ -30,7 +28,7 @@ Dernière mise à jour : 22 mars 2026
 - [x] Session 7 : Deploy pipeline — push GitHub (Octokit) + deploy Vercel + schema Supabase ✅
 - [x] Session 8 : Frontend — landing (immersive/animée) + auth dark + dashboard + new project ✅
 - [x] Session 9 : Frontend — workspace (chat panel + preview panel + file tree + deploy) ✅
-- [ ] Session 10 : Tests E2E (3 flows Playwright) + deploy Vercel prod
+- [x] Session 10 : Tests E2E (3 flows Playwright) + deploy Vercel prod ✅
 
 ## Détail Session 1 (complété le 21 mars 2026)
 
@@ -743,3 +741,53 @@ src/app/(dashboard)/app/project/[id]/
 - Pas de stockage de fichiers en BDD (éphémère, en mémoire)
 - sanitizeForLog sur les noms de fichiers
 - Images > 5MB redimensionnées avant envoi LLM (optimisation coût tokens)
+
+## Détail Session 10 (complété le 22 mars 2026)
+
+### Packages installés
+- `@playwright/test` — framework E2E tests
+
+### Fichiers créés
+```
+playwright.config.ts  → Config Playwright (chromium, baseURL, webServer dev)
+e2e/
+  landing.spec.ts     → Test 1 : première visite, headline "Build it. Own it.", CTA → /sign-up
+  dashboard.spec.ts   → Test 2 : dashboard auth, "New project", formulaire, redirect /app/project/[id]
+  workspace.spec.ts   → Test 3 : workspace panels (chat, preview, header projet, bouton deploy)
+```
+
+### Tests E2E — 3 scénarios Phase 1
+
+**Test 1 — Première visite (landing.spec.ts)** :
+- Navigate vers /
+- Vérifie "Build it." et "Own it." visibles
+- Clique "Start building" → redirect /sign-up
+- ✅ Fonctionne sans auth
+
+**Test 2 — Dashboard authentifié (dashboard.spec.ts)** :
+- Avec CLERK_TESTING_TOKEN : /app → heading "Projects" → "New project" → /app/new → formulaire "Nouveau projet" → submit → redirect /app/project/[id]
+- Sans token : /app → redirect /sign-in (flow auth vérifié)
+
+**Test 3 — Workspace (workspace.spec.ts)** :
+- Avec CLERK_TESTING_TOKEN + TEST_PROJECT_ID : /app/project/[id] → header visible → chat panel → preview panel → h1 nom projet → bouton Deploy
+- Sans token : redirect /sign-in
+
+### Deploy Vercel — vérifié
+- vercel.json : framework nextjs, buildCommand, outputDirectory, installCommand ✅
+- .env.example : 15 variables documentées avec instructions ✅
+- README.md : section "Deploy (Vercel)" ajoutée avec instructions complètes ✅
+- README.md : section "Tests E2E (Playwright)" ajoutée ✅
+- README.md : tableau env vars avec descriptions ✅
+
+### Nettoyage final
+- console.log de debug : 0 trouvé dans /src ✅
+- TypeScript strict : `tsc --noEmit` = 0 erreurs ✅
+- `npm run build` : compilé + 17 pages générées, 0 erreurs ✅
+- .gitignore : ajout Playwright artifacts (test-results/, playwright-report/, blob-report/, playwright/.cache/) ✅
+- .gitignore : .env, .env.local, .env.production, node_modules/, .next/, .vercel/, .claude/ ✅
+
+### Conventions respectées
+- TypeScript strict — 0 errors
+- kebab-case fichiers
+- Imports absolus @/
+- Pas de barrel files

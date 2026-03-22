@@ -10,5 +10,11 @@ dist/
 
 .vercel
 
+# Playwright
+/test-results/
+/playwright-report/
+/blob-report/
+/playwright/.cache/
+
 # Claude Code personal config (non-projet)
 .claude/
