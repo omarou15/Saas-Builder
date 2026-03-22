@@ -13,11 +13,6 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Panel,
-  Group,
-  Separator,
-} from "react-resizable-panels";
-import {
   MessageSquare,
   Eye,
   Files,
@@ -50,34 +45,6 @@ export interface WorkspaceLayoutProps {
 }
 
 type MobileTab = "chat" | "preview";
-
-// ─────────────────────────────────────────────
-// Resize handle component
-// ─────────────────────────────────────────────
-
-function ResizeHandle({
-  direction = "horizontal",
-}: {
-  direction?: "horizontal" | "vertical";
-}) {
-  return (
-    <Separator
-      className={cn(
-        "group relative flex items-center justify-center",
-        direction === "horizontal"
-          ? "w-1.5 cursor-col-resize"
-          : "h-1.5 cursor-row-resize"
-      )}
-    >
-      <div
-        className={cn(
-          "rounded-full bg-white/5 transition-colors group-hover:bg-orange-500/30 group-active:bg-orange-500/50",
-          direction === "horizontal" ? "h-8 w-0.5" : "h-0.5 w-8"
-        )}
-      />
-    </Separator>
-  );
-}
 
 // ─────────────────────────────────────────────
 // Bottom panel (Files + Console + Problems + Terminal)
@@ -650,86 +617,68 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
 
       {/* Main content */}
       <div className="flex-1 overflow-hidden">
-        {/* Desktop: resizable split panels */}
+        {/* Desktop: CSS flex split (chat left, preview right, bottom bar) */}
         <div className="hidden h-full lg:flex lg:flex-col">
-          <Group orientation="vertical" className="flex-1">
-            <Panel defaultSize={75} minSize={40}>
-              <Group orientation="horizontal">
-                {/* Chat panel */}
-                <Panel defaultSize={40} minSize={25} maxSize={60}>
-                  <div className="relative h-full min-w-0">
-                    <ChatPanel
-                      projectId={project.id}
-                      sessionId={sessionId}
-                      onStageChange={handleStageChange}
-                      onAgentDone={handleAgentDone}
-                      pendingError={chatPendingError}
-                      onTryToFix={handleTryToFix}
-                      onDismissError={handleDismissError}
-                    />
-                    {/* Start session overlay */}
-                    {showStartButton && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-                        <div className="text-center">
-                          <p className="mb-3 text-sm text-muted-foreground">
-                            Aucune session active
-                          </p>
-                          <button
-                            onClick={() => void startSession("build")}
-                            className="rounded-lg bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2 text-sm font-semibold text-white transition-all hover:from-orange-400 hover:to-orange-500"
-                          >
-                            Démarrer le build
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                    {sessionLoading && (
-                      <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm">
-                        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-                          <Loader2 className="h-4 w-4 animate-spin text-orange-400" />
-                          Démarrage de la session…
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </Panel>
-
-                <ResizeHandle direction="horizontal" />
-
-                {/* Preview panel */}
-                <Panel defaultSize={60} minSize={30}>
-                  <PreviewPanel
-                    sessionId={sessionId ?? undefined}
-                    onConsoleLogs={setConsoleLogs}
-                    onBuildErrors={setBuildErrors}
-                    onPreviewError={handlePreviewError}
-                    onStderrData={handleTerminalData}
-                  />
-                </Panel>
-              </Group>
-            </Panel>
-
-            <ResizeHandle direction="vertical" />
-
-            {/* Bottom panel (file tree / logs) — collapsed by default */}
-            <Panel
-              defaultSize={5}
-              minSize={5}
-              maxSize={50}
-              collapsible
-              collapsedSize={3}
-              onResize={(size) => setBottomCollapsed(size.asPercentage <= 5)}
-            >
-              <BottomPanel
-                files={files}
-                consoleLogs={consoleLogs}
-                buildErrors={buildErrors}
-                terminalLogs={terminalLogs}
-                collapsed={bottomCollapsed}
-                onToggle={() => setBottomCollapsed((v) => !v)}
+          {/* Top section: chat + preview side by side */}
+          <div className="flex flex-1 min-h-0">
+            {/* Chat panel — fixed 400px width */}
+            <div className="relative w-[400px] shrink-0 border-r border-white/5">
+              <ChatPanel
+                projectId={project.id}
+                sessionId={sessionId}
+                onStageChange={handleStageChange}
+                onAgentDone={handleAgentDone}
+                pendingError={chatPendingError}
+                onTryToFix={handleTryToFix}
+                onDismissError={handleDismissError}
               />
-            </Panel>
-          </Group>
+              {/* Start session overlay */}
+              {showStartButton && (
+                <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+                  <div className="text-center">
+                    <p className="mb-3 text-sm text-muted-foreground">
+                      Aucune session active
+                    </p>
+                    <button
+                      onClick={() => void startSession("build")}
+                      className="rounded-lg bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2 text-sm font-semibold text-white transition-all hover:from-orange-400 hover:to-orange-500"
+                    >
+                      Démarrer le build
+                    </button>
+                  </div>
+                </div>
+              )}
+              {sessionLoading && (
+                <div className="absolute inset-0 flex items-center justify-center bg-background/80 backdrop-blur-sm">
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin text-orange-400" />
+                    Démarrage de la session…
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Preview panel — fills remaining space */}
+            <div className="flex-1 min-w-0">
+              <PreviewPanel
+                sessionId={sessionId ?? undefined}
+                onConsoleLogs={setConsoleLogs}
+                onBuildErrors={setBuildErrors}
+                onPreviewError={handlePreviewError}
+                onStderrData={handleTerminalData}
+              />
+            </div>
+          </div>
+
+          {/* Bottom panel (file tree / logs) */}
+          <BottomPanel
+            files={files}
+            consoleLogs={consoleLogs}
+            buildErrors={buildErrors}
+            terminalLogs={terminalLogs}
+            collapsed={bottomCollapsed}
+            onToggle={() => setBottomCollapsed((v) => !v)}
+          />
         </div>
 
         {/* Mobile: tab-based */}
