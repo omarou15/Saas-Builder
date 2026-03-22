@@ -222,6 +222,7 @@ export async function openBroadcastChannel(sessionId: string): Promise<void> {
   // Subscribe and wait for confirmation
   await new Promise<void>((resolve, reject) => {
     channel.subscribe((status) => {
+      console.log(`[BROADCAST] Emitter channel subscribe status for session:${sessionId}:`, status);
       if (status === "SUBSCRIBED") resolve();
       else if (status === "CHANNEL_ERROR") reject(new Error("Realtime channel error"));
     });
@@ -261,6 +262,7 @@ function broadcastEvent(sessionId: string, event: AgentEvent): void {
 }
 
 export function emitEvent(session: ReconnectedSession, event: AgentEvent): void {
+  console.log(`[BROADCAST] Sending event type=${event.type} to channel session:${session.sessionId}`);
   // Local emitter (same Lambda / dev)
   session.emitter.emit("agent_event", event);
   // Cross-Lambda broadcast (production)

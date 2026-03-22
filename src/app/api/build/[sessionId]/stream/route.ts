@@ -63,6 +63,7 @@ export async function GET(
       const channel = supabase.channel(`session:${sessionId}`);
 
       channel.on("broadcast", { event: "agent_event" }, (message) => {
+        console.log(`[STREAM] Received event from Realtime for session:${sessionId}`);
         const event = message.payload as AgentEvent;
         send(event);
 
@@ -79,6 +80,7 @@ export async function GET(
       });
 
       channel.subscribe((status) => {
+        console.log(`[STREAM] Channel subscribe status:`, status);
         if (status === "SUBSCRIBED") {
           // Send initial connection event
           try {
