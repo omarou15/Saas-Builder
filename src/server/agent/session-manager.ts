@@ -202,43 +202,78 @@ export async function closeSession(sessionId: string): Promise<void> {
 }
 
 // ============================================================
-// Event helpers — dual emission: local EventEmitter + Supabase Realtime
-// The local emitter works when agent + SSE are in the same Lambda (dev).
-// Supabase Realtime broadcast works cross-Lambda (production/serverless).
+// Realtime broadcast channel — ONE channel per agent execution
+// Created once via openBroadcastChannel(), reused for all events,
+// cleaned up via closeBroadcastChannel() at the end of the step.
 // ============================================================
 
-/** Broadcast an agent event via Supabase Realtime */
-async function broadcastToRealtime(sessionId: string, event: AgentEvent): Promise<void> {
-  try {
-    const supabase = createServiceClient();
-    const channel = supabase.channel(`session:${sessionId}`);
-    await channel.send({
-      type: "broadcast",
-      event: "agent_event",
-      payload: event,
+import type { RealtimeChannel } from "@supabase/supabase-js";
+
+/** Per-session broadcast channel (lives for the duration of runAgentStep) */
+const activeChannels = new Map<string, { channel: RealtimeChannel; supabase: ReturnType<typeof createServiceClient> }>();
+
+/** Open a Realtime broadcast channel for a session. Call ONCE at start of agent step. */
+export async function openBroadcastChannel(sessionId: string): Promise<void> {
+  if (activeChannels.has(sessionId)) return; // already open
+
+  const supabase = createServiceClient();
+  const channel = supabase.channel(`session:${sessionId}`);
+
+  // Subscribe and wait for confirmation
+  await new Promise<void>((resolve, reject) => {
+    channel.subscribe((status) => {
+      if (status === "SUBSCRIBED") resolve();
+      else if (status === "CHANNEL_ERROR") reject(new Error("Realtime channel error"));
     });
-    // Unsubscribe immediately — we're just sending, not listening
-    await supabase.removeChannel(channel);
-  } catch (err) {
-    console.warn("[session-manager] Realtime broadcast failed:", err instanceof Error ? err.message : err);
+    // Timeout after 5s
+    setTimeout(() => resolve(), 5000);
+  });
+
+  activeChannels.set(sessionId, { channel, supabase });
+}
+
+/** Close the broadcast channel. Call at end of agent step. */
+export async function closeBroadcastChannel(sessionId: string): Promise<void> {
+  const entry = activeChannels.get(sessionId);
+  if (entry) {
+    await entry.supabase.removeChannel(entry.channel);
+    activeChannels.delete(sessionId);
   }
+}
+
+// ============================================================
+// Event helpers — dual emission: local EventEmitter + Supabase Realtime
+// ============================================================
+
+function broadcastEvent(sessionId: string, event: AgentEvent): void {
+  const entry = activeChannels.get(sessionId);
+  if (!entry) {
+    console.warn("[session-manager] No active broadcast channel for session", sessionId);
+    return;
+  }
+  void entry.channel.send({
+    type: "broadcast",
+    event: "agent_event",
+    payload: event,
+  }).catch((err: unknown) => {
+    console.warn("[session-manager] Broadcast send failed:", err instanceof Error ? err.message : err);
+  });
 }
 
 export function emitEvent(session: ReconnectedSession, event: AgentEvent): void {
   // Local emitter (same Lambda / dev)
   session.emitter.emit("agent_event", event);
   // Cross-Lambda broadcast (production)
-  void broadcastToRealtime(session.sessionId, event);
+  broadcastEvent(session.sessionId, event);
 }
 
 export function emitDone(session: ReconnectedSession): void {
   session.emitter.emit("agent_done");
-  const doneEvent: AgentEvent = {
+  broadcastEvent(session.sessionId, {
     type: "done" as AgentEvent["type"],
     payload: null,
     timestamp: new Date().toISOString(),
-  };
-  void broadcastToRealtime(session.sessionId, doneEvent);
+  });
 }
 
 export function emitError(session: ReconnectedSession, message: string): void {
@@ -249,5 +284,5 @@ export function emitError(session: ReconnectedSession, message: string): void {
   };
   session.emitter.emit("agent_event", event);
   session.emitter.emit("agent_error");
-  void broadcastToRealtime(session.sessionId, event);
+  broadcastEvent(session.sessionId, event);
 }

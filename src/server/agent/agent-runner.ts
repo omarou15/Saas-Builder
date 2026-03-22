@@ -19,7 +19,7 @@ import { generateText, stepCountIs } from "ai";
 import { createOpenAI } from "@ai-sdk/openai";
 import type { ModelMessage } from "ai";
 import { createAgentTools, INTAKE_TOOLS, BUILD_TOOLS, ITERATE_TOOLS } from "./tools";
-import { emitEvent, emitError, saveSessionState } from "./session-manager";
+import { emitEvent, emitError, saveSessionState, openBroadcastChannel, closeBroadcastChannel } from "./session-manager";
 import type { ReconnectedSession } from "./session-manager";
 import { INTAKE_PROMPT, BUILD_PROMPT, ITERATE_PROMPT } from "./prompts";
 import { deductCredits, toCreditCost, estimateCost } from "@/lib/credits";
@@ -81,6 +81,9 @@ export async function runAgentStep(
   }
 
   session.status = "running";
+
+  // Open Supabase Realtime broadcast channel (one per agent step execution)
+  await openBroadcastChannel(session.sessionId);
 
   // Emit user message back to frontend (for display in chat)
   const userEvent: AgentEvent = {
@@ -238,6 +241,8 @@ export async function runAgentStep(
     await saveSessionState(session.sessionId, session.conversationHistory, session.status).catch((err) => {
       console.error("[agent-runner] Failed to save session state:", err instanceof Error ? err.message : err);
     });
+    // Close Realtime broadcast channel
+    await closeBroadcastChannel(session.sessionId);
   }
 }
 
