@@ -1,17 +1,20 @@
 // POST /api/build/[sessionId]/message — Send a user message to the agent
-// The agent processes the message and emits events on the SSE stream.
-// This endpoint returns immediately (fire-and-forget); events flow via SSE.
+// The agent processes the message and writes events to agent_events table.
+// The frontend reads events via SSE polling (stream route).
+// This endpoint AWAITS the agent step — Lambda must stay alive until done.
 //
 // Rate limit: 20 req/min
 // Body: { message: string, attachments?: Attachment[] }
-// Returns: { ok: true, status: "running" }
+// Returns: { ok: true, status: "done" }
+
+export const maxDuration = 300; // 5 min (Vercel Pro)
 
 import { auth } from "@clerk/nextjs/server";
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { rateLimit } from "@/lib/rate-limit";
 import { getUserByClerkId, getUserCredits } from "@/lib/credits";
-import { reconnectSession, saveSessionState } from "@/server/agent/session-manager";
+import { reconnectSession } from "@/server/agent/session-manager";
 import { runAgentStep } from "@/server/agent/agent-runner";
 import { createServiceClient } from "@/lib/supabase";
 
@@ -129,19 +132,14 @@ export async function POST(
     mimeType: a.mimeType,
   }));
 
-  // Run agent step asynchronously — fire-and-forget with state persistence
-  // Events flow through the SSE stream; state is saved to Supabase after completion
-  runAgentStep(session, message, parsedAttachments)
-    .then(async () => {
-      await saveSessionState(sessionId, session.conversationHistory, session.status);
-    })
-    .catch(async (err) => {
-      console.error(
-        "[build/message] Unhandled agent error:",
-        err instanceof Error ? err.message : err
-      );
-      await saveSessionState(sessionId, session.conversationHistory, "error").catch(() => {});
-    });
+  // Await the agent step — the Lambda must stay alive until the agent finishes.
+  // The frontend doesn't wait for this HTTP response; it reads events via SSE polling.
+  // State is saved in the finally block of runAgentStep itself.
+  try {
+    await runAgentStep(session, message, parsedAttachments);
+  } catch (err) {
+    console.error("[build/message] Agent error:", err instanceof Error ? err.message : err);
+  }
 
-  return NextResponse.json({ ok: true, status: "running" });
+  return NextResponse.json({ ok: true, status: "done" });
 }
