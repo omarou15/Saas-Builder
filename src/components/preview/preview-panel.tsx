@@ -170,9 +170,14 @@ export function PreviewPanel({
       setServerUrl(url);
     });
 
-    // Boot (idempotent — safe to call multiple times)
-    webContainerManager.boot().catch((err: unknown) => {
-      console.error("[WebContainer] boot error:", err);
+    // Boot with auto-retry: if "Unable to create more instances", teardown and retry once
+    webContainerManager.boot().catch(async () => {
+      // Auto-retry: teardown stale instance, wait 1s, try again
+      webContainerManager.teardown();
+      await new Promise((r) => setTimeout(r, 1000));
+      webContainerManager.boot().catch((retryErr: unknown) => {
+        console.error("[WebContainer] boot retry failed:", retryErr);
+      });
     });
 
     // After boot + server ready, load the initial file list

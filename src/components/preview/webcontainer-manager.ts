@@ -252,9 +252,8 @@ class WebContainerManager {
       throw new Error("WebContainerManager.boot() must be called in the browser");
     }
 
-    // Already booted and running — nothing to do
+    // Already booted and running — reuse existing instance
     if (this.wc) {
-      // If server is already ready, re-notify listeners (component remount)
       if (this._serverUrl) {
         this.emit("running");
         for (const fn of this.serverReadyListeners) fn(this._serverUrl);
@@ -271,43 +270,23 @@ class WebContainerManager {
     this.emit("booting");
 
     try {
-      // CRITIQUE : boot() doit résoudre AVANT tout appel fs ou mount (CLAUDE.md)
-      // WebContainer.boot() ne peut être appelé qu'UNE SEULE FOIS par page.
       this.bootPromise = WebContainer.boot();
       this.wc = await this.bootPromise;
 
-      // Register server-ready BEFORE mounting/running anything
       this.wc.on("server-ready", (_port, url) => {
         this._serverUrl = url;
         this.emit("running");
         for (const fn of this.serverReadyListeners) fn(url);
       });
 
-      // Mount the starter template — requires boot() to be resolved first
       await this.wc.mount(STARTER_TEMPLATE);
-
-      // npm install
       await this.install();
-
-      // Start the dev server (fire-and-forget — keeps running)
       this.startDevServer();
     } catch (err) {
       const msg = err instanceof Error ? err.message : "WebContainer boot failed";
-
-      // "Unable to create more instances" = WebContainer already booted in this page.
-      // Reset bootPromise so the "Réessayer" button can call resetAndBoot().
-      if (msg.includes("Unable to create more instances")) {
-        this.bootPromise = null;
-        this.wc = null;
-        this.emit("error", msg);
-        return;
-      }
-
       this.emit("error", msg);
-      // Reset so callers can retry on transient failures
       this.bootPromise = null;
       this.wc = null;
-      throw err;
     }
   }
 

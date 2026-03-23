@@ -27,6 +27,7 @@ import { ChatPanel } from "./chat-panel";
 import { DeployDialog } from "./deploy-dialog";
 import { PreviewPanel } from "@/components/preview/preview-panel";
 import { FileTree, useFileTree } from "@/components/preview/file-tree";
+import { webContainerManager } from "@/components/preview/webcontainer-manager";
 import type {
   Project,
   ProjectStatus,
@@ -364,6 +365,16 @@ export function WorkspaceLayout({ project }: WorkspaceLayoutProps) {
   const autoFixMaxRetries = 3;
 
   const { files } = useFileTree();
+
+  // ── Cleanup WebContainer on unmount + beforeunload ──
+  useEffect(() => {
+    const cleanup = () => webContainerManager.teardown();
+    window.addEventListener("beforeunload", cleanup);
+    return () => {
+      window.removeEventListener("beforeunload", cleanup);
+      cleanup();
+    };
+  }, []);
 
   // ── Fetch credits on mount ─────────────────
   useEffect(() => {
