@@ -401,31 +401,20 @@ export function ChatPanel({
       switch (type) {
         case "assistant_message": {
           const text = (event.payload as { content?: string })?.content ?? "";
+          if (!text) break;
           setStreaming(true);
 
-          if (!streamingMsgIdRef.current) {
-            const id = `stream-${Date.now()}`;
-            streamingMsgIdRef.current = id;
-            streamingContentRef.current = text;
-            setMessages((prev) => [
-              ...prev,
-              {
-                id,
-                role: "assistant",
-                content: text,
-                timestamp: event.timestamp,
-              },
-            ]);
-          } else {
-            streamingContentRef.current += text;
-            const currentContent = streamingContentRef.current;
-            const currentId = streamingMsgIdRef.current;
-            setMessages((prev) =>
-              prev.map((m) =>
-                m.id === currentId ? { ...m, content: currentContent } : m
-              )
-            );
-          }
+          // Each assistant_message from polling is a complete message — always create a new bubble
+          const id = `assistant-${Date.now()}-${Math.random()}`;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id,
+              role: "assistant",
+              content: text,
+              timestamp: event.timestamp,
+            },
+          ]);
           scrollToBottom();
           break;
         }
@@ -495,6 +484,7 @@ export function ChatPanel({
           streamingMsgIdRef.current = null;
           streamingContentRef.current = "";
           setStreaming(false);
+          setSending(false);
           break;
         }
 
@@ -502,6 +492,7 @@ export function ChatPanel({
           const payload = event.payload as { message?: string };
           setError(payload.message ?? "An error occurred");
           setStreaming(false);
+          setSending(false);
           streamingMsgIdRef.current = null;
           streamingContentRef.current = "";
           break;
@@ -509,6 +500,7 @@ export function ChatPanel({
 
         case "done": {
           setStreaming(false);
+          setSending(false);
           streamingMsgIdRef.current = null;
           streamingContentRef.current = "";
           onAgentDone?.();
@@ -793,8 +785,8 @@ export function ChatPanel({
             </div>
           ))}
 
-          {/* Streaming indicator */}
-          {streaming && !streamingMsgIdRef.current && (
+          {/* Loading indicator — show immediately when sending or streaming */}
+          {(sending || streaming) && (
             <div className="flex items-center gap-2 pl-10 text-xs text-muted-foreground">
               <Loader2 className="h-3 w-3 animate-spin text-orange-400" />
               <span>L&apos;agent réfléchit…</span>
